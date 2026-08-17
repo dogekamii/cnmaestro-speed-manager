@@ -1,0 +1,5 @@
+{
+  "version": "1.0.3",
+  "download_url": "https://github.com/dogekamii/cnmaestro-speed-manager/releases/download/v1.0.3/cnmaestro-speed-manager-1.0.3.zip",
+  "notes": "Initial production-candidate release with cnMaestro inventory scanning, package classification, offline filtering, controlled template changes, audit logging, update notifications, and desktop shortcut support."
+}
