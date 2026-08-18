@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "max_batch_size": 50,
+  "canary_size": 1,
+  "failure_threshold": 1,
+  "stop_on_first_issue": true,
+  "protected_scopes": [],
+  "packages": [
+    {"name":"6 Mbps","template":"6mbps Package","downlink":6451,"uplink":2150},
+    {"name":"10 Mbps","template":"10mbps Package","downlink":10752,"uplink":1075},
+    {"name":"15 Mbps","template":"15mbps Package","downlink":16128,"uplink":3225},
+    {"name":"20 Mbps","template":"20mbps Package","downlink":21500,"uplink":10752},
+    {"name":"25 Mbps","template":"25mbps Package","downlink":26880,"uplink":3225},
+    {"name":"50 Mbps","template":"50mbps Package","downlink":53760,"uplink":10750},
+    {"name":"75 Mbps","template":"75mbps Package","downlink":80640,"uplink":10750},
+    {"name":"100 Mbps","template":"100mbps Package","downlink":107520,"uplink":21500}
+  ]
+}

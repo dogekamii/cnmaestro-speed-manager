@@ -1,0 +1,25 @@
+name: Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12', cache: pip}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest
+      - run: ruff check .
+      - run: mypy src/operations_toolkit
+      - run: pyinstaller --clean --noconfirm OperationsToolkit.spec
+      - name: Smoke-test packaged EXE
+        run: .\dist\OperationsToolkit.exe --smoke-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OperationsToolkit-windows-unsigned
+          path: dist/OperationsToolkit.exe
