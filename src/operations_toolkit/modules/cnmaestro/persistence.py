@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
+import unicodedata
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -13,6 +14,16 @@ from operations_toolkit.core.security import redact
 from .models import BatchPlan
 
 CURRENT_SCHEMA_VERSION = 2
+
+
+def _csv_cell(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    for character in value:
+        if character.isspace() or unicodedata.category(character).startswith("C"):
+            continue
+        return f"'{value}" if character in "=+-@" else value
+    return value
 
 
 class OperationState(StrEnum):
@@ -225,7 +236,9 @@ class OperationStore:
             if rows:
                 writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
                 writer.writeheader()
-                writer.writerows(rows)
+                writer.writerows(
+                    {key: _csv_cell(value) for key, value in row.items()} for row in rows
+                )
         return path
 
     def raw(self, statement: str) -> list[sqlite3.Row]:

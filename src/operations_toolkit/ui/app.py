@@ -35,6 +35,8 @@ class Application(tb.Window):
         )
         self.module_titles = ("Overview", "Bulk Speed Changes", "Audit & Recovery")
         self._views: dict[str, Any] = {}
+        self._connecting_adapter: LiveCnMaestroAdapter | None = None
+        self._connection_future: Future[str] | None = None
         self._shutting_down = False
         self._build_shell()
         self.protocol("WM_DELETE_WINDOW", self._shutdown)
@@ -44,6 +46,8 @@ class Application(tb.Window):
         if self._shutting_down:
             return
         self._shutting_down = True
+        if self._connecting_adapter is not None:
+            self._close_provisional(self._connecting_adapter)
         with suppress(Exception):
             self.context.session_gate.shutdown()
         self._async_worker.close()
@@ -131,40 +135,50 @@ class Application(tb.Window):
         )
 
     def connect(self) -> None:
+        if self.demo:
+            raise RuntimeError("live connections are disabled in demo mode")
         if not self.client_id.get() or not self.client_secret.get():
             messagebox.showerror("Credentials required", "Enter client ID and client secret.")
             return
+        if self._connecting_adapter is not None:
+            raise RuntimeError("a connection attempt is already in progress")
         adapter = LiveCnMaestroAdapter(
             self.endpoint.get(),
             self.client_id.get(),
             self.client_secret.get(),
             approved_redirect_hosts={"api.cambiumnetworks.com", "cloud.cambiumnetworks.com"},
         )
+        self._connecting_adapter = adapter
         self.connection_button.configure(state=DISABLED)
         self.connection_status.set("● Connecting…")
 
         future = self._async_worker.submit(adapter.connect())
+        self._connection_future = future
         self._watch_connection(future, adapter)
 
     def _watch_connection(
         self, future: Future[str], adapter: LiveCnMaestroAdapter
     ) -> None:
         if self._shutting_down:
+            self._close_provisional(adapter)
             return
         if not future.done():
             self.after(20, self._watch_connection, future, adapter)
             return
         try:
             base = future.result()
-        except Exception as exc:
-            self._connection_failed(exc)
-        else:
             self._connected(adapter, base)
+        except Exception as exc:
+            self._connection_failed(exc, adapter)
 
     def _connected(self, adapter: LiveCnMaestroAdapter, base: str) -> None:
+        if adapter is not self._connecting_adapter:
+            return
         self.context.session_gate.replace(
             adapter, lambda: self._async_worker.run(adapter.close(), timeout=15)
         )
+        self._connecting_adapter = None
+        self._connection_future = None
         self.context.services["cnmaestro.adapter"] = adapter
         self.client_secret.set("")
         self.connection_status.set(f"● Connected · {base}")
@@ -173,7 +187,19 @@ class Application(tb.Window):
         if view and hasattr(view, "set_adapter"):
             view.set_adapter(adapter)
 
-    def _connection_failed(self, exc: Exception) -> None:
+    def _close_provisional(self, adapter: LiveCnMaestroAdapter) -> None:
+        if adapter is not self._connecting_adapter:
+            return
+        future = self._connection_future
+        self._connecting_adapter = None
+        self._connection_future = None
+        if future is not None and not future.done():
+            future.cancel()
+        with suppress(Exception):
+            self._async_worker.run(adapter.close(), timeout=15)
+
+    def _connection_failed(self, exc: Exception, adapter: LiveCnMaestroAdapter) -> None:
+        self._close_provisional(adapter)
         self.client_secret.set("")
         self.connection_status.set("● Connection failed")
         self.connection_button.configure(state="normal")

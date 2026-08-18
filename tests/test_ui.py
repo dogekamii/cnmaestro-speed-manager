@@ -161,3 +161,151 @@ def test_ui_requests_remainder_approval_after_canary_submission(monkeypatch) -> 
         assert sum(event.startswith("submit:") for event in events) == 2
     finally:
         app._shutdown()
+
+
+def test_demo_connect_boundary_never_constructs_live_adapter(monkeypatch) -> None:
+    from operations_toolkit.ui import app as app_module
+
+    events: list[str] = []
+
+    class ForbiddenLiveAdapter:
+        def __init__(self, *_args, **_kwargs) -> None:
+            events.append("constructed")
+
+        async def connect(self) -> str:
+            events.append("connect-called")
+            return "forbidden"
+
+    monkeypatch.setattr(app_module, "LiveCnMaestroAdapter", ForbiddenLiveAdapter)
+    app = Application(demo=True)
+    app.client_id.set("should-never-be-used")
+    app.client_secret.set("should-never-be-used")
+    try:
+        with pytest.raises(RuntimeError, match="disabled in demo mode"):
+            app.connect()
+        assert events == []
+    finally:
+        app._shutdown()
+
+
+def test_failed_provisional_adapter_is_closed_and_cleared_exactly_once(monkeypatch) -> None:
+    import time
+
+    from operations_toolkit.ui import app as app_module
+
+    events: list[str] = []
+
+    class FailingLiveAdapter:
+        def __init__(self, *_args, **_kwargs) -> None:
+            events.append("constructed")
+
+        async def connect(self) -> str:
+            events.append("connect-called")
+            raise RuntimeError("synthetic connect failure")
+
+        async def close(self) -> None:
+            events.append("close-called")
+
+    monkeypatch.setattr(app_module, "LiveCnMaestroAdapter", FailingLiveAdapter)
+    monkeypatch.setattr(app_module.messagebox, "showerror", lambda *_args: None)
+    app = Application(demo=False)
+    app.client_id.set("client")
+    app.client_secret.set("secret")
+    try:
+        app.connect()
+        deadline = time.monotonic() + 2
+        while app.connection_status.get() != "● Connection failed" and time.monotonic() < deadline:
+            app.update()
+            time.sleep(0.01)
+        assert app.connection_status.get() == "● Connection failed"
+        assert events == ["constructed", "connect-called", "close-called"]
+        assert app.context.session_gate.connection is None
+        assert "cnmaestro.adapter" not in app.context.services
+    finally:
+        app._shutdown()
+    assert events.count("close-called") == 1
+
+
+def test_shutdown_cancels_and_closes_connecting_adapter_once_despite_late_watcher(monkeypatch) -> None:
+    import asyncio
+    import time
+
+    from operations_toolkit.ui import app as app_module
+
+    events: list[str] = []
+    instances: list[object] = []
+
+    class BlockingLiveAdapter:
+        def __init__(self, *_args, **_kwargs) -> None:
+            instances.append(self)
+            events.append("constructed")
+
+        async def connect(self) -> str:
+            events.append("connect-called")
+            await asyncio.Future()
+            return "unreachable"
+
+        async def close(self) -> None:
+            events.append("close-called")
+
+    monkeypatch.setattr(app_module, "LiveCnMaestroAdapter", BlockingLiveAdapter)
+    app = Application(demo=False)
+    app.client_id.set("client")
+    app.client_secret.set("secret")
+    app.connect()
+    deadline = time.monotonic() + 2
+    while "connect-called" not in events and time.monotonic() < deadline:
+        app.update()
+        time.sleep(0.01)
+    assert events[:2] == ["constructed", "connect-called"]
+    future = app._connection_future
+    adapter = instances[0]
+    assert future is not None
+
+    app._shutdown()
+    app._watch_connection(future, adapter)  # type: ignore[arg-type]
+    app._shutdown()
+
+    assert events.count("close-called") == 1
+    assert future.cancelled()
+
+
+def test_session_registration_race_closes_provisional_adapter_on_failure(monkeypatch) -> None:
+    import time
+
+    from operations_toolkit.ui import app as app_module
+
+    events: list[str] = []
+    instances: list[object] = []
+
+    class SuccessfulLiveAdapter:
+        def __init__(self, *_args, **_kwargs) -> None:
+            instances.append(self)
+
+        async def connect(self) -> str:
+            return "https://api.cambiumnetworks.com"
+
+        async def close(self) -> None:
+            events.append("close-called")
+
+    monkeypatch.setattr(app_module, "LiveCnMaestroAdapter", SuccessfulLiveAdapter)
+    monkeypatch.setattr(app_module.messagebox, "showerror", lambda *_args: None)
+    app = Application(demo=False)
+    app.client_id.set("client")
+    app.client_secret.set("secret")
+    app.context.session_gate.begin("publish")
+    try:
+        app.connect()
+        future = app._connection_future
+        assert future is not None
+        deadline = time.monotonic() + 2
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert future.done()
+        app._watch_connection(future, instances[0])  # type: ignore[arg-type]
+        assert app.connection_status.get() == "● Connection failed"
+        assert events == ["close-called"]
+        assert app.context.session_gate.connection is None
+    finally:
+        app._shutdown()
+    assert events == ["close-called"]

@@ -104,3 +104,58 @@ def test_create_run_is_atomic_when_duplicate_rows_violate_primary_key(tmp_path: 
         assert connection.execute("SELECT COUNT(*) FROM cn_speed_operations").fetchone()[0] == 0
     finally:
         connection.close()
+
+
+def test_csv_export_neutralizes_formula_payloads_but_json_preserves_raw_values(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = OperationStore(tmp_path / "formula-audit.db")
+    raw = {
+        "normal": "Access-North_01",
+        "equals": '=HYPERLINK("https://attacker.invalid")',
+        "plus": "+SUM(1,1)",
+        "minus": "-1+2",
+        "at": "@SUM(1,1)",
+        "whitespace_prefix": " \t=CMD()",
+        "control_prefix": "\x00\r\n@SUM(1,1)",
+        "numeric": -42,
+    }
+    monkeypatch.setattr(store, "audit_rows", lambda: [raw])
+
+    csv_path = store.export_csv(tmp_path / "audit.csv")
+    json_path = store.export_json(tmp_path / "audit.json")
+
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        exported = next(csv.DictReader(handle))
+    for key in ("equals", "plus", "minus", "at", "whitespace_prefix", "control_prefix"):
+        assert exported[key] == "'" + str(raw[key])
+    assert exported["normal"] == raw["normal"]
+    assert exported["numeric"] == "-42"
+    assert json.loads(json_path.read_text(encoding="utf-8")) == [raw]
+
+
+def test_persisted_errors_redact_named_secrets_embedded_in_strings(tmp_path: Path) -> None:
+    store = OperationStore(tmp_path / "named-secret-audit.db")
+    plan = PlanBuilder(catalog()).build((device(),), "50 Mbps", connection_identity="test")
+    store.create_run("run-secret", plan)
+    detail = (
+        'request failed: client_secret=super-secret password="hunter2" '  # pragma: allowlist secret
+        "refresh_token='refresh-value'; safe=customer-42"  # pragma: allowlist secret
+    )
+
+    store.transition(
+        "run-secret",
+        device().mac,
+        OperationState.FAILED,
+        error_category="request",
+        error_detail=detail,
+    )
+
+    persisted = store.device("run-secret", device().mac)["error_detail"]
+    assert "super-secret" not in persisted
+    assert "hunter2" not in persisted
+    assert "refresh-value" not in persisted
+    assert "client_secret=[REDACTED]" in persisted
+    assert 'password="[REDACTED]"' in persisted
+    assert "refresh_token='[REDACTED]'" in persisted
+    assert "safe=customer-42" in persisted
