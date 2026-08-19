@@ -1,4 +1,4 @@
-"""Verify the v1.2 visual source preserves the original v1.1 behavior AST."""
+"""Verify the v1.3 visual source preserves the original v1.1 behavior AST."""
 from __future__ import annotations
 
 import ast
@@ -13,7 +13,9 @@ CORE_APP_METHODS = (
     "scan_all", "stream", "finish_all", "clear_cache", "suggestion",
     "displaypkg", "filt", "sortkey", "sort", "tree_click", "select_visible",
     "deselect_visible", "clear_selection", "show", "preview_rows",
-    "publish_status", "execute", "progress_done", "finish_publish", "audit",
+    "publish_status", "execute", "progress_done", "finish_publish",
+    # App.audit now performs visual in-app navigation; its unchanged query/table data
+    # behavior is covered by tests/test_inline_tool_views.py.
     # check_updates intentionally differs and is covered by tests/test_updater.py.
     "apply_theme", "load_settings", "vt", "update_result",
 )

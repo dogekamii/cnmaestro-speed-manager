@@ -1,14 +1,15 @@
-# Operations Toolkit 1.2.2
+# Operations Toolkit 1.3.0
 
-Operations Toolkit includes the working cnMaestro Speed Manager with the approved compact service/tool navigation. Version 1.2.2 restores packaged update checks while preserving the v1.2.1 interface and cnMaestro behavior.
+Operations Toolkit includes the working cnMaestro Speed Manager with compact service/tool navigation. Version 1.3.0 restores the dense v1.2.0-style workspace while keeping the current nested service navigation and cnMaestro behavior.
 
-## What changed in 1.2.2
+## What changed in 1.3.0
 
-- Packaged builds now use the repository's built-in `latest.json` update manifest when no sidecar configuration exists.
-- `update_config.json` remains an optional override for deployments that need a different manifest URL.
-- Preserved the v1.2.1 interface and the v1.1.0 cnMaestro API, TLS, package, scan/filter/selection, preview/publish, audit, and cache behavior.
+- Restored the dense dark-navy v1.2.0-style Speed Manager workspace with compact auth, scan, filter, table, and publish sections.
+- Kept the nested Overview > cnMaestro > Speed Manager navigation; Activity is renamed Audit Log.
+- Scan & Filters, Preview & Publish, and Audit Log are in-app views, with the existing audit CSV export retained.
+- Other dialogs and the cnMaestro API, TLS, scan/filter/selection, preview/publish, audit, cache, updater, latest-manifest, and package behavior are unchanged.
 
-No cnMaestro API or backend behavior was redesigned for this release. Older releases remain available in GitHub release history.
+Older releases remain available in GitHub release history.
 
 ## Included v1.1.0 behavior
 
@@ -35,18 +36,20 @@ To override the manifest URL, place a valid `update_config.json` beside the exec
 Run `build_windows.bat`, or use the equivalent command after installing `requirements.txt`:
 
 ```powershell
-pyinstaller --noconfirm --clean --onefile --windowed --name "Operations-Toolkit-v1.2.2" cnmaestro_speed_manager.py
+pyinstaller --noconfirm --clean --onefile --windowed --name "Operations-Toolkit-v1.3.0" cnmaestro_speed_manager.py
 ```
 
-The executable is written to `dist\Operations-Toolkit-v1.2.2.exe`.
+The executable is written to `dist\Operations-Toolkit-v1.3.0.exe`.
 
 ## Regression guard
 
-`release_checks/ast_behavior_guard.py` compares the API class and nonvisual operational methods with the original v1.1.0 source by AST. The intentionally changed updater resolver/check path is covered by focused unit tests. CI also checks Python syntax/import, builds the Windows one-file/windowed executable, and launches and closes the GUI briefly with preview mode enabled and without making cnMaestro calls.
+`release_checks/ast_behavior_guard.py` compares the API class and nonvisual operational methods with the original v1.1.0 source by AST. The intentionally changed updater resolver/check path and in-app visual navigation are covered by focused tests. CI also checks Python syntax/import, builds the Windows one-file/windowed executable, and launches and closes the GUI briefly with preview mode enabled and without making cnMaestro calls.
 
 ## Approved interface
 
-![Operations Toolkit compact nested service and tool navigation](screenshots/operations-toolkit-compact-navigation.png)
+![Operations Toolkit dense Speed Manager workspace](screenshots/operations-toolkit-v1.3.0-speed-manager-1280x760.png)
+
+![Operations Toolkit in-app Audit Log](screenshots/operations-toolkit-v1.3.0-audit-log-1280x760.png)
 
 ## Approximate matching safety
 
