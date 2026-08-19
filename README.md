@@ -1,72 +1,62 @@
-# Operations Toolkit
+# Operations Toolkit 1.2.0
 
-**Version 2.0.0-beta.2** — a modular, safety-first Windows desktop for deliberate infrastructure operations. The first first-party provider is **cnMaestro Bulk Speed Changes**. The established v1.1.0 Speed Manager remains the stable baseline; this beta does not replace or delete it.
+Operations Toolkit is the working cnMaestro Speed Manager v1.1.0 application with the approved **Concept A** navigation, layout, and branding. Version 1.2.0 is a visual release: cnMaestro API and operational behavior remain AST-equivalent to v1.1.0.
 
-> The beta EXE is unsigned and may trigger Microsoft SmartScreen. There is no silent installer or silent update. Verify `SHA256SUMS` before opening a downloaded executable.
+## What changed in 1.2.0
 
-## What is included
+- Renamed the desktop experience to **Operations Toolkit**.
+- Added the approved Concept A shell with Home, Tools, Audit Log, and Settings navigation.
+- Added the approved dark visual styling, dashboard cards, and Operations Toolkit branding.
+- Preserved the v1.1.0 cnMaestro API class, package logic, scan/preview/publish flow, and nonvisual core methods.
 
-- Polished dark Tkinter/ttkbootstrap shell with static left navigation, connection/status header, module cards, status badges, progress, and accessible confirmations.
-- Small documented first-party module contract; no runtime third-party plugin discovery.
-- Deterministic `--demo` mode that uses an in-memory adapter and cannot make network requests.
-- cnMaestro Bulk Speed Changes: exact DL+UL matching, immutable previews, protected scopes, maximum batch size, one-device canary, explicit remainder approval, failure threshold, and stop-on-first-issue.
-- SQLite WAL write-ahead state machine: `planned → submitting → submitted → job_known → verified`, plus `failed` and `unknown`.
-- Audit/recovery viewer and CSV/JSON exports with exact before/target/verified rates and scope.
-- Safe GET retries with bounded exponential backoff/jitter and shared 429 handling. PUT is attempted once; timeout/connection loss is `UNKNOWN` and requires reconciliation.
-- Regional cnMaestro token redirects are accepted only as HTTPS base URLs on port 443 when the hostname is the authentication host, an exact approved host, or a DNS-label-boundary subdomain of `cloud.cambiumnetworks.com`.
+No cnMaestro API or backend behavior was redesigned for this release.
 
-## Install and run from source
+## Included v1.1.0 behavior
 
-Requires Python 3.11+.
+- Optional closest-downstream package suggestions with adjustable tolerance and visible DL/UL variance. Exact package remains authoritative.
+- Sortable columns.
+- Persistent checkbox selection across filters, with select/deselect visible and selected-only view.
+- Publish progress bar, per-customer stage, success/failure counters, and completion popup.
+- System, Light, and Dark appearance modes from the v1.1.0 baseline (the approved Concept A presentation uses Dark).
+
+## Run from source
+
+On Windows, run **Launch Operations Toolkit.bat**. Open **Tools** for the cnMaestro Speed Manager workflow. Keep write actions disabled during validation.
+
+The pinned dependencies are listed in `requirements.txt`.
+
+## Build the Windows executable
+
+Run `build_windows.bat`, or use the equivalent command after installing `requirements.txt`:
 
 ```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-python -m operations_toolkit --demo
+pyinstaller --noconfirm --clean --onefile --windowed --name "Operations-Toolkit-v1.2.0" cnmaestro_speed_manager.py
 ```
 
-Live mode:
+The executable is written to `dist\Operations-Toolkit-v1.2.0.exe`.
 
-```powershell
-python -m operations_toolkit
-```
+## Regression guard
 
-Credentials are kept only in memory, cleared from the secret field after connection, and cleared with tokens when a session closes. Only HTTPS endpoints are accepted; localhost HTTP is available solely through explicit test-only APIs. Token redirects must be credential-free HTTPS base URLs on port 443 and match the authentication host, an exact approved host, or the configured DNS suffix at a label boundary.
+`release_checks/ast_behavior_guard.py` compares the API class and nonvisual core methods with the original v1.1.0 source by AST. CI also checks Python syntax/import, builds the Windows one-file/windowed executable, and launches the GUI briefly without making cnMaestro calls.
 
-## Safe operating flow
+## Concept A screenshots
 
-1. Configure `packages.json` in the application data directory. Set `protected_scopes` (`network:…`, `tower:…`, `ap:…`), `max_batch_size`, canary size/failure policy.
-2. Connect. Connection switching is frozen while scan, publish, or reconciliation is active.
-3. Scan, select devices, and create an immutable preview. Any target, selection, rates, package, online state, or scope change invalidates it.
-4. Review exact DL/UL before and target rates. Approximate matching is informational and needs explicit per-device acknowledgement before planning.
-5. Type `APPLY SPEED CHANGES`, approve the canary flow, and confirm. There is intentionally no publish-cancel button: queued work can stop before the next device, but an in-flight PUT continues.
-6. Review Audit & Recovery. Never resubmit an `UNKNOWN` write; reconcile it first.
+### Home
 
-See [Operator runbook](docs/OPERATOR_RUNBOOK.md), [Architecture](docs/ARCHITECTURE.md), and [Module contract](docs/MODULES.md).
+![Operations Toolkit Concept A home](screenshots/operations-toolkit-home.png)
 
-## Rollback
+### Tools
 
-Every plan captures exact previous rates and the previous known template. A rollback plan may include only a **verified** prior change whose exact previous DL+UL maps to a validated catalog template. Unmatched prior configurations are marked not automatically rollbackable. Rollback uses the same documented template operation and must pass normal preview/canary/stale-check/verification controls; no undocumented API is assumed.
+![Operations Toolkit Concept A tools](screenshots/operations-toolkit-tools-1120x700.png)
 
-## Updates
+### Audit Log
 
-Update metadata must use HTTPS and the approved `dogekamii/cnmaestro-speed-manager` GitHub repository. An EXE is not opened until its SHA-256 matches metadata. Installation is always operator initiated. The existing root `latest.json` is intentionally preserved for the v1 stable line; beta metadata is shown under `release/`.
+![Operations Toolkit Concept A audit log](screenshots/operations-toolkit-audit.png)
 
-## Recovery and evidence limits
+### Settings
 
-The WAL database is durable operational evidence and supports restart visibility for `unknown`, `submitted`, and `job_known` records. Versioned migrations are transactional and create a pre-migration backup. It is **not tamper-proof compliance evidence**; export records to an appropriately controlled evidence system when required.
+![Operations Toolkit Concept A settings](screenshots/operations-toolkit-settings.png)
 
-## Development
+## Approximate matching safety
 
-```bash
-python -m pip install -e '.[dev]'
-xvfb-run -a pytest --cov=operations_toolkit
-ruff check .
-mypy src/operations_toolkit
-python -m operations_toolkit --smoke-test
-pyinstaller --clean --noconfirm OperationsToolkit.spec
-./dist/OperationsToolkit --smoke-test  # Linux validation; CI runs OperationsToolkit.exe on Windows
-```
-
-All cnMaestro API tests use fixtures/fakes. Do not point tests at a live tenant. Build outputs, databases, credentials, the v1 ZIP/reference, and exports are gitignored.
+Approximate matching changes display/grouping only. Preview retains actual live QoS. The downstream tolerance defaults to 10%. Upload variance is shown but does not determine the suggestion.

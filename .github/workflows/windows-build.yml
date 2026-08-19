@@ -1,37 +1,64 @@
-name: Windows EXE
+name: Windows build
+
 on:
-  workflow_dispatch:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: '3.11', cache: pip}
-      - run: python -m pip install -e ".[dev]"
-      - run: python -m pytest --ignore=tests/test_ui.py
-      - name: Run Windows UI tests in isolated interpreters
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Python syntax and import compile
+        env:
+          OPERATIONS_TOOLKIT_PREVIEW: '1'
+        run: |
+          python -m py_compile cnmaestro_speed_manager.py
+          python -c "import cnmaestro_speed_manager"
+      - name: Verify v1.1 AST behavior equivalence
+        run: python release_checks/ast_behavior_guard.py
+      - name: Build versioned one-file Windows EXE
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name "Operations-Toolkit-v1.2.0" cnmaestro_speed_manager.py
+      - name: Smoke-test GUI launch
         shell: pwsh
         run: |
-          $nodes = python -m pytest --collect-only -q tests/test_ui.py |
-            Where-Object { $_ -like "tests/test_ui.py::*" }
-          if ($nodes.Count -eq 0) { throw "No UI tests collected" }
-          foreach ($node in $nodes) {
-            python -m pytest -q $node
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:OPERATIONS_TOOLKIT_PREVIEW = '1'
+          $exe = Resolve-Path '.\dist\Operations-Toolkit-v1.2.0.exe'
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) {
+            throw "GUI exited immediately with code $($process.ExitCode)"
           }
-      - run: ruff check .
-      - run: mypy src/operations_toolkit
-      - run: pyinstaller --clean --noconfirm OperationsToolkit.spec
-      - name: Smoke-test packaged EXE
-        run: .\dist\OperationsToolkit.exe --smoke-test
+          $null = $process.CloseMainWindow()
+          if (-not $process.WaitForExit(5000)) {
+            Stop-Process -Id $process.Id
+            Wait-Process -Id $process.Id -ErrorAction SilentlyContinue
+          }
+          Write-Host 'GUI remained alive for 8 seconds and was closed cleanly.'
+      - name: Generate SHA256SUMS
+        shell: pwsh
+        run: |
+          $name = 'Operations-Toolkit-v1.2.0.exe'
+          $hash = (Get-FileHash ".\dist\$name" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Set-Content -NoNewline -Encoding ascii .\dist\SHA256SUMS
+          Get-Content .\dist\SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: OperationsToolkit-windows-unsigned
-          path: dist/OperationsToolkit.exe
+          name: Operations-Toolkit-v1.2.0-windows
+          if-no-files-found: error
+          path: |
+            dist/Operations-Toolkit-v1.2.0.exe
+            dist/SHA256SUMS
