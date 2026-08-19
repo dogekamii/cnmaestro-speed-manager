@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import tkinter as tk
 from tkinter import ttk
+from tkinter import font as tkfont
 import unittest
 
 _TEST_DATA_ROOT = tempfile.mkdtemp()
@@ -51,6 +52,12 @@ class InlineToolViewTests(unittest.TestCase):
         _, _, _, settings = self.app.nav_items["settings"]
         self.assertEqual([overview.cget("text"), audit.cget("text"), settings.cget("text")],
                          ["Overview", "Audit Log", "Settings"])
+
+    def test_navigation_labels_use_v120_text_size(self):
+        labels = [self.app.nav_items[key][3] for key in ("overview", "speed_manager", "audit", "settings")]
+        labels.append(self.app.service_navigation[0]["widgets"][2])
+        sizes = [tkfont.Font(root=self.app, font=label.cget("font")).cget("size") for label in labels]
+        self.assertEqual(sizes, [11, 11, 11, 11, 11])
 
     def test_dense_v120_workspace_embeds_scan_filters_table_and_publish(self):
         self.app.deiconify()
