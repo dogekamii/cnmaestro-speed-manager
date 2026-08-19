@@ -1,15 +1,14 @@
-# Operations Toolkit 1.2.0
+# Operations Toolkit 1.2.1
 
-Operations Toolkit is the working cnMaestro Speed Manager v1.1.0 application with the approved **Concept A** navigation, layout, and branding. Version 1.2.0 is a visual release: cnMaestro API and operational behavior remain AST-equivalent to v1.1.0.
+Operations Toolkit includes the working cnMaestro Speed Manager with the approved compact service/tool navigation. Version 1.2.1 corrects the v1.2.0 visual shell while preserving cnMaestro API and operational behavior from the v1.1.0 baseline.
 
-## What changed in 1.2.0
+## What changed in 1.2.1
 
-- Renamed the desktop experience to **Operations Toolkit**.
-- Added the approved Concept A shell with Home, Tools, Audit Log, and Settings navigation.
-- Added the approved dark visual styling, dashboard cards, and Operations Toolkit branding.
-- Preserved the v1.1.0 cnMaestro API class, package logic, scan/preview/publish flow, and nonvisual core methods.
+- Replaced the v1.2.0 card dashboard with the approved compact sidebar.
+- Added the service/tool hierarchy: **Overview**, expandable **cnMaestro → Speed Manager**, **Activity**, and **Settings**.
+- Preserved the v1.1.0 cnMaestro API class, TLS behavior, package logic, scan/filter/selection/preview/publish/audit/cache/update behavior, and dependencies.
 
-No cnMaestro API or backend behavior was redesigned for this release.
+No cnMaestro API or backend behavior was redesigned for this release. Version 1.2.0 is superseded but remains available in GitHub release history.
 
 ## Included v1.1.0 behavior
 
@@ -17,11 +16,11 @@ No cnMaestro API or backend behavior was redesigned for this release.
 - Sortable columns.
 - Persistent checkbox selection across filters, with select/deselect visible and selected-only view.
 - Publish progress bar, per-customer stage, success/failure counters, and completion popup.
-- System, Light, and Dark appearance modes from the v1.1.0 baseline (the approved Concept A presentation uses Dark).
+- System, Light, and Dark appearance modes from the v1.1.0 baseline.
 
 ## Run from source
 
-On Windows, run **Launch Operations Toolkit.bat**. Open **Tools** for the cnMaestro Speed Manager workflow. Keep write actions disabled during validation.
+On Windows, run **Launch Operations Toolkit.bat**. Expand **cnMaestro** and select **Speed Manager**. Keep write actions disabled during validation.
 
 The pinned dependencies are listed in `requirements.txt`.
 
@@ -30,32 +29,18 @@ The pinned dependencies are listed in `requirements.txt`.
 Run `build_windows.bat`, or use the equivalent command after installing `requirements.txt`:
 
 ```powershell
-pyinstaller --noconfirm --clean --onefile --windowed --name "Operations-Toolkit-v1.2.0" cnmaestro_speed_manager.py
+pyinstaller --noconfirm --clean --onefile --windowed --name "Operations-Toolkit-v1.2.1" cnmaestro_speed_manager.py
 ```
 
-The executable is written to `dist\Operations-Toolkit-v1.2.0.exe`.
+The executable is written to `dist\Operations-Toolkit-v1.2.1.exe`.
 
 ## Regression guard
 
-`release_checks/ast_behavior_guard.py` compares the API class and nonvisual core methods with the original v1.1.0 source by AST. CI also checks Python syntax/import, builds the Windows one-file/windowed executable, and launches the GUI briefly without making cnMaestro calls.
+`release_checks/ast_behavior_guard.py` compares the API class and nonvisual operational methods with the original v1.1.0 source by AST. CI also checks Python syntax/import, builds the Windows one-file/windowed executable, and launches and closes the GUI briefly with preview mode enabled and without making cnMaestro calls.
 
-## Concept A screenshots
+## Approved interface
 
-### Home
-
-![Operations Toolkit Concept A home](screenshots/operations-toolkit-home.png)
-
-### Tools
-
-![Operations Toolkit Concept A tools](screenshots/operations-toolkit-tools-1120x700.png)
-
-### Audit Log
-
-![Operations Toolkit Concept A audit log](screenshots/operations-toolkit-audit.png)
-
-### Settings
-
-![Operations Toolkit Concept A settings](screenshots/operations-toolkit-settings.png)
+![Operations Toolkit compact nested service and tool navigation](screenshots/operations-toolkit-compact-navigation.png)
 
 ## Approximate matching safety
 

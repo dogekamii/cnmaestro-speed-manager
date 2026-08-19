@@ -1,10 +1,10 @@
-import asyncio,csv,json,os,re,sqlite3,threading,time,ssl,random,sys,webbrowser
+import asyncio,json,os,re,sqlite3,threading,time,ssl,random,sys,webbrowser
 from datetime import datetime,timezone
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk,messagebox,filedialog
+from tkinter import ttk,messagebox
 import httpx,truststore
-APP_VERSION='1.2.0';APP_DIR=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent;UPDATE_CONFIG=APP_DIR/'update_config.json'
+APP_VERSION='1.2.1';APP_DIR=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent;UPDATE_CONFIG=APP_DIR/'update_config.json'
 PKGS={"6 Mbps":("6mbps Package",6451,2150),"10 Mbps":("10mbps Package",10752,1075),"15 Mbps":("15mbps Package",16128,3225),"20 Mbps":("20mbps Package",21500,10752),"25 Mbps":("25mbps Package",26880,3225),"50 Mbps":("50mbps Package",53760,10750),"75 Mbps":("75mbps Package",80640,10750),"100 Mbps":("100mbps Package",107520,21500)}
 OTHER='Other / Unmatched';PHRASE='APPLY SPEED CHANGES';CONCURRENCY=4;CACHE_HOURS=24
 DATA=Path(os.getenv('LOCALAPPDATA',Path.home()))/'cnMaestroSpeedManager';DATA.mkdir(exist_ok=True);DB=DATA/'speed_manager.db';SETTINGS=DATA/'settings.json'
@@ -89,144 +89,107 @@ class API:
   finally:await c.aclose()
 class App(tk.Tk):
  def __init__(self):
-  super().__init__();initdb();self.title('Operations Toolkit');self.geometry('1280x760');self.minsize(1120,700);self.api=None;self.rows=cached();self.preview=[];self.checked=set();self.cancel=threading.Event();self.scanning=False;self.sort_col='name';self.sort_rev=False;self.job_status={};self.style=ttk.Style();self.update_status=tk.StringVar(value=f'Operations Toolkit {APP_VERSION} is installed');self.ui();self.load_settings();self.render();self.show_page('home')
+  super().__init__();initdb();self.title('Operations Toolkit');self.geometry('1280x720');self.minsize(1120,680);self.api=None;self.rows=cached();self.preview=[];self.checked=set();self.cancel=threading.Event();self.scanning=False;self.sort_col='name';self.sort_rev=False;self.job_status={};self.style=ttk.Style();self.ui()
+  if os.getenv('OPERATIONS_TOOLKIT_PREVIEW'):self.configure_styles()
+  else:self.load_settings();self.configure_styles() if self.theme.get()=='Dark' else None
+  self.render();self.show_page('speed_manager')
   if not os.getenv('OPERATIONS_TOOLKIT_PREVIEW'):self.after(1500,lambda:self.check_updates(True))
  def configure_styles(self):
-  self.colors={'bg':'#071625','sidebar':'#0a1827','surface':'#142333','surface2':'#192a3c','border':'#34485a','text':'#f5f7fa','muted':'#b5c0cf','accent':'#42d6ef','accent_dark':'#0c7085','success':'#49d26f','disabled':'#697788','danger':'#ef6b73'}
-  c=self.colors;self.configure(bg=c['bg']);self.style.theme_use('clam')
-  self.style.configure('.',font=('Segoe UI',9),background=c['bg'],foreground=c['text'])
-  self.style.configure('TFrame',background=c['bg']);self.style.configure('Surface.TFrame',background=c['surface'])
-  self.style.configure('TLabel',background=c['bg'],foreground=c['text']);self.style.configure('Surface.TLabel',background=c['surface'],foreground=c['text']);self.style.configure('Muted.TLabel',background=c['bg'],foreground=c['muted']);self.style.configure('SurfaceMuted.TLabel',background=c['surface'],foreground=c['muted'])
-  self.style.configure('Title.TLabel',font=('Segoe UI Semibold',22),background=c['bg'],foreground=c['text']);self.style.configure('PageTitle.TLabel',font=('Segoe UI Semibold',16),background=c['bg'],foreground=c['text']);self.style.configure('CardTitle.TLabel',font=('Segoe UI Semibold',11),background=c['surface'],foreground=c['text']);self.style.configure('ToolTitle.TLabel',font=('Segoe UI Semibold',14),background=c['surface'],foreground=c['text'])
-  self.style.configure('TButton',font=('Segoe UI Semibold',9),padding=(12,7),background=c['surface2'],foreground=c['text'],borderwidth=1,relief='flat');self.style.map('TButton',background=[('active',c['border']),('disabled',c['surface'])],foreground=[('disabled',c['disabled'])])
-  self.style.configure('Accent.TButton',background=c['accent'],foreground='#04131a',padding=(14,8));self.style.map('Accent.TButton',background=[('active','#78e5f7'),('pressed',c['accent_dark'])])
-  self.style.configure('TEntry',fieldbackground=c['surface2'],foreground=c['text'],insertcolor=c['text'],bordercolor=c['border'],lightcolor=c['border'],darkcolor=c['border'],padding=5)
-  self.style.configure('TCombobox',fieldbackground=c['surface2'],background=c['surface2'],foreground=c['text'],arrowcolor=c['accent'],bordercolor=c['border'],lightcolor=c['border'],darkcolor=c['border'],padding=4);self.style.map('TCombobox',fieldbackground=[('readonly',c['surface2'])],foreground=[('readonly',c['text'])])
+  self.colors={'bg':'#09131d','sidebar':'#0b1621','surface':'#111c27','surface2':'#142230','border':'#263746','text':'#eef3f8','muted':'#8998a8','accent':'#1686ee','accent2':'#45a9ff','success':'#70d957','warning':'#e2b900','danger':'#ef5148'};c=self.colors;self.configure(bg=c['bg']);self.style.theme_use('clam')
+  self.style.configure('.',font=('Segoe UI',8),background=c['bg'],foreground=c['text'])
+  self.style.configure('TFrame',background=c['bg']);self.style.configure('Surface.TFrame',background=c['surface']);self.style.configure('TLabel',background=c['bg'],foreground=c['text']);self.style.configure('Surface.TLabel',background=c['surface'],foreground=c['text']);self.style.configure('Muted.TLabel',background=c['bg'],foreground=c['muted']);self.style.configure('SurfaceMuted.TLabel',background=c['surface'],foreground=c['muted'])
+  self.style.configure('PageTitle.TLabel',font=('Segoe UI Semibold',16),background=c['bg'],foreground=c['text']);self.style.configure('CardTitle.TLabel',font=('Segoe UI Semibold',10),background=c['surface'],foreground=c['text']);self.style.configure('Metric.TLabel',font=('Segoe UI Semibold',16),background=c['surface'],foreground=c['text'])
+  self.style.configure('TButton',font=('Segoe UI Semibold',8),padding=(10,5),background=c['surface2'],foreground=c['text'],borderwidth=1,relief='flat');self.style.map('TButton',background=[('active',c['border']),('disabled',c['surface'])],foreground=[('disabled',c['muted'])])
+  self.style.configure('Accent.TButton',background=c['accent'],foreground='#ffffff',padding=(12,6));self.style.map('Accent.TButton',background=[('active',c['accent2']),('pressed','#0870cf')])
+  self.style.configure('TEntry',font=('Segoe UI',8),fieldbackground='#0d1823',foreground=c['text'],insertcolor=c['text'],bordercolor=c['border'],lightcolor=c['border'],darkcolor=c['border'],padding=4)
+  self.style.configure('TCombobox',font=('Segoe UI',8),fieldbackground='#0d1823',background='#0d1823',foreground=c['text'],arrowcolor=c['muted'],bordercolor=c['border'],lightcolor=c['border'],darkcolor=c['border'],padding=3);self.style.map('TCombobox',fieldbackground=[('readonly','#0d1823')],foreground=[('readonly',c['text'])])
   self.style.configure('TCheckbutton',background=c['surface'],foreground=c['text']);self.style.map('TCheckbutton',background=[('active',c['surface'])],foreground=[('active',c['text'])])
-  self.style.configure('Treeview',font=('Segoe UI',9),background=c['surface'],foreground=c['text'],fieldbackground=c['surface'],bordercolor=c['border'],lightcolor=c['border'],darkcolor=c['border'],rowheight=26);self.style.map('Treeview',background=[('selected',c['accent_dark'])],foreground=[('selected','#ffffff')])
-  self.style.configure('Treeview.Heading',font=('Segoe UI Semibold',9),background=c['surface2'],foreground=c['muted'],bordercolor=c['border'],relief='flat',padding=(6,7));self.style.map('Treeview.Heading',background=[('active',c['border'])])
-  self.style.configure('Horizontal.TProgressbar',background=c['accent'],troughcolor=c['surface2'],bordercolor=c['surface2'],lightcolor=c['accent'],darkcolor=c['accent']);self.style.configure('TScrollbar',background=c['surface2'],troughcolor=c['surface'],bordercolor=c['border'],arrowcolor=c['muted'],lightcolor=c['surface2'],darkcolor=c['surface2'])
-  self.option_add('*TCombobox*Listbox.background',c['surface2']);self.option_add('*TCombobox*Listbox.foreground',c['text']);self.option_add('*TCombobox*Listbox.selectBackground',c['accent_dark'])
- def card(self,parent,padx=14,pady=11):
-  c=self.colors;outer=tk.Frame(parent,bg=c['surface'],highlightbackground=c['border'],highlightcolor=c['border'],highlightthickness=1);body=ttk.Frame(outer,style='Surface.TFrame',padding=(padx,pady));body.pack(fill='both',expand=True);return outer,body
- def card_heading(self,parent,title,subtitle=None):
-  ttk.Label(parent,text=title,style='CardTitle.TLabel').pack(anchor='w')
-  if subtitle:ttk.Label(parent,text=subtitle,style='SurfaceMuted.TLabel').pack(anchor='w',pady=(2,7))
+  self.style.configure('Treeview',font=('Segoe UI',8),background='#0d1823',foreground='#c9d3dd',fieldbackground='#0d1823',bordercolor=c['border'],lightcolor=c['border'],darkcolor=c['border'],rowheight=25);self.style.map('Treeview',background=[('selected','#123b62')],foreground=[('selected','#ffffff')])
+  self.style.configure('Treeview.Heading',font=('Segoe UI Semibold',8),background='#111e2a',foreground=c['muted'],bordercolor=c['border'],relief='flat',padding=(5,5));self.style.map('Treeview.Heading',background=[('active',c['border'])])
+  self.style.configure('Horizontal.TProgressbar',background=c['accent'],troughcolor=c['surface2'],bordercolor=c['surface2']);self.style.configure('TScrollbar',background=c['surface2'],troughcolor=c['surface'],bordercolor=c['border'],arrowcolor=c['muted'])
+  self.option_add('*TCombobox*Listbox.background','#0d1823');self.option_add('*TCombobox*Listbox.foreground',c['text']);self.option_add('*TCombobox*Listbox.selectBackground','#123b62')
+ def card(self,parent,padx=10,pady=8):
+  outer=tk.Frame(parent,bg=self.colors['surface'],highlightbackground=self.colors['border'],highlightthickness=1);body=ttk.Frame(outer,style='Surface.TFrame',padding=(padx,pady));body.pack(fill='both',expand=True);return outer,body
  def ui(self):
-  self.configure_styles();c=self.colors
-  self.shell=tk.Frame(self,bg=c['bg']);self.shell.pack(fill='both',expand=True)
-  self.sidebar=tk.Frame(self.shell,bg=c['sidebar'],width=230,highlightbackground=c['border'],highlightthickness=1);self.sidebar.pack(side='left',fill='y');self.sidebar.pack_propagate(False)
-  self.nav_buttons={};icons={'home':'⌂','tools':'⚒','audit':'▤','settings':'⚙'}
-  for key,label in [('home','Home'),('tools','Tools'),('audit','Audit Log'),('settings','Settings')]:
-   row=tk.Frame(self.sidebar,bg=c['sidebar'],height=47,cursor='hand2');row.pack(fill='x',padx=(6,16),pady=(31,0) if key=='home' else (5,0));row.pack_propagate(False)
-   bar=tk.Frame(row,bg=c['sidebar'],width=3);bar.pack(side='left',fill='y')
-   icon=tk.Label(row,text=icons[key],font=('Segoe UI Symbol',20),width=2,anchor='center',fg=c['muted'],bg=c['sidebar'],cursor='hand2');icon.pack(side='left',padx=(9,7))
-   text=tk.Label(row,text=label,font=('Segoe UI Semibold',11),anchor='w',fg=c['muted'],bg=c['sidebar'],cursor='hand2');text.pack(side='left',fill='both',expand=True)
-   for widget in (row,bar,icon,text):widget.bind('<Button-1>',lambda e,k=key:self.show_page(k))
-   self.nav_buttons[key]=(row,bar,icon,text)
-  self.content=tk.Frame(self.shell,bg=c['bg']);self.content.pack(side='left',fill='both',expand=True)
-  self.pages={'home':tk.Frame(self.content,bg=c['bg'])}
-  self.pages['home'].grid(row=0,column=0,sticky='nsew')
-  for key in ('tools','audit','settings'):
-   page=ttk.Frame(self.content,padding=(22,18));page.grid(row=0,column=0,sticky='nsew');self.pages[key]=page
-  self.content.rowconfigure(0,weight=1);self.content.columnconfigure(0,weight=1)
-  self.build_home();self.build_tool();self.build_audit_page();self.build_settings()
+  self.configure_styles();c=self.colors;self.shell=tk.Frame(self,bg=c['bg']);self.shell.pack(fill='both',expand=True)
+  self.sidebar=tk.Frame(self.shell,bg=c['sidebar'],width=160,highlightbackground=c['border'],highlightthickness=1);self.sidebar.pack(side='left',fill='y');self.sidebar.pack_propagate(False)
+  self.nav_items={};self.service_navigation=[{'key':'cnmaestro','label':'cnMaestro','icon':'☁','tools':[{'key':'speed_manager','label':'Speed Manager'}]}]
+  self.nav_container=tk.Frame(self.sidebar,bg=c['sidebar']);self.nav_container.pack(fill='x',pady=(15,0));self.add_nav_row('overview','Overview','⌂')
+  for service in self.service_navigation:self.add_service_group(service)
+  self.add_nav_row('activity','Activity','▣');self.add_nav_row('settings','Settings','⚙')
+  tk.Label(self.sidebar,text=f'v{APP_VERSION}',font=('Segoe UI',7),fg='#596878',bg=c['sidebar']).pack(side='bottom',anchor='w',padx=14,pady=12)
+  self.content=tk.Frame(self.shell,bg=c['bg']);self.content.pack(side='left',fill='both',expand=True);self.content.rowconfigure(0,weight=1);self.content.columnconfigure(0,weight=1)
+  self.pages={}
+  for key in ('overview','speed_manager','activity','settings'):
+   page=ttk.Frame(self.content,padding=(15,12));page.grid(row=0,column=0,sticky='nsew');self.pages[key]=page
+  self.auth=tk.StringVar(value='https://cloud.cambiumnetworks.com');self.cid=tk.StringVar();self.sec=tk.StringVar();self.status=tk.StringVar(value='Disconnected');self.theme=tk.StringVar(value='Dark')
+  self.build_speed_manager();self.build_overview();self.build_activity();self.build_settings();self.build_control_window();self.build_preview_window()
+ def add_nav_row(self,key,label,icon,parent=None,indent=0):
+  c=self.colors;holder=parent or self.nav_container;row=tk.Frame(holder,bg=c['sidebar'],height=35,cursor='hand2');row.pack(fill='x',padx=(5+indent,7),pady=1);row.pack_propagate(False)
+  bar=tk.Frame(row,bg=c['sidebar'],width=3);bar.pack(side='left',fill='y');ico=tk.Label(row,text=icon,font=('Segoe UI Symbol',11),width=2,fg=c['muted'],bg=c['sidebar'],cursor='hand2');ico.pack(side='left',padx=(5,3));text=tk.Label(row,text=label,font=('Segoe UI Semibold',8),anchor='w',fg=c['muted'],bg=c['sidebar'],cursor='hand2');text.pack(side='left',fill='both',expand=True)
+  for w in (row,bar,ico,text):w.bind('<Button-1>',lambda e,k=key:self.show_page(k))
+  self.nav_items[key]=(row,bar,ico,text);return row
+ def add_service_group(self,service):
+  c=self.colors;row=tk.Frame(self.nav_container,bg=c['sidebar'],height=35,cursor='hand2');row.pack(fill='x',padx=(5,7),pady=1);row.pack_propagate(False);bar=tk.Frame(row,bg=c['sidebar'],width=3);bar.pack(side='left',fill='y');ico=tk.Label(row,text=service['icon'],font=('Segoe UI Symbol',11),width=2,fg=c['accent2'],bg=c['sidebar'],cursor='hand2');ico.pack(side='left',padx=(5,3));text=tk.Label(row,text=service['label'],font=('Segoe UI Semibold',8),anchor='w',fg=c['accent2'],bg=c['sidebar'],cursor='hand2');text.pack(side='left',fill='both',expand=True);chev=tk.Label(row,text='⌄',font=('Segoe UI',9),fg=c['accent2'],bg=c['sidebar'],cursor='hand2');chev.pack(side='right',padx=7)
+  child=tk.Frame(self.nav_container,bg=c['sidebar']);child.pack(fill='x');service['row']=row;service['widgets']=(bar,ico,text,chev);service['child_frame']=child;service['expanded']=True
+  for w in (row,bar,ico,text,chev):w.bind('<Button-1>',lambda e,s=service:self.toggle_service(s))
+  for tool in service['tools']:self.add_nav_row(tool['key'],tool['label'],'',child,indent=22)
+ def toggle_service(self,service):
+  service['expanded']=not service['expanded'];service['widgets'][3].configure(text='⌄' if service['expanded'] else '›')
+  if service['expanded']:service['child_frame'].pack(fill='x',after=service['row'])
+  else:service['child_frame'].pack_forget()
  def show_page(self,key):
-  self.pages[key].tkraise();c=self.colors
-  for name,(row,bar,icon,text) in self.nav_buttons.items():
-   active=name==key;bg=c['surface2'] if active else c['sidebar'];fg=c['text'] if active else c['muted']
-   row.configure(bg=bg);bar.configure(bg=c['accent'] if active else bg);icon.configure(bg=bg,fg=c['accent'] if active else fg);text.configure(bg=bg,fg=fg)
-  if key=='home':self.refresh_home_activity()
-  elif key=='audit':self.refresh_audit()
- def build_home(self):
-  p=self.pages['home'];self.home_canvas=tk.Canvas(p,bg=self.colors['bg'],highlightthickness=0,bd=0,cursor='arrow');self.home_canvas.pack(fill='both',expand=True)
-  self.home_canvas.bind('<Configure>',lambda e:self.draw_home())
-  self.home_canvas.bind('<Button-1>',self.home_click)
-  self.home_open_region=(0,0,0,0)
- def home_click(self,event):
-  x1,y1,x2,y2=self.home_open_region
-  if x1<=event.x<=x2 and y1<=event.y<=y2:self.show_page('tools')
- def rounded_rect(self,canvas,x1,y1,x2,y2,r=7,**kw):
-  points=(x1+r,y1,x2-r,y1,x2,y1,x2,y1+r,x2,y2-r,x2,y2,x2-r,y2,x1+r,y2,x1,y2,x1,y2-r,x1,y1+r,x1,y1)
-  return canvas.create_polygon(points,smooth=True,splinesteps=16,**kw)
- def draw_network_icon(self,canvas,cx,cy,color):
-  nodes=[(cx,cy-27),(cx-25,cy-8),(cx+25,cy-8),(cx-16,cy+24),(cx+17,cy+24)]
-  for x,y in nodes[1:]:canvas.create_line(cx,cy,x,y,fill=color,width=2)
-  for x,y in nodes:canvas.create_oval(x-5,y-5,x+5,y+5,outline=color,width=2,fill=self.colors['surface'])
- def draw_globe_icon(self,canvas,cx,cy,color):
-  canvas.create_oval(cx-32,cy-32,cx+32,cy+32,outline=color,width=3);canvas.create_oval(cx-15,cy-32,cx+15,cy+32,outline=color,width=2);canvas.create_line(cx-32,cy,cx+32,cy,fill=color,width=2);canvas.create_line(cx-27,cy-15,cx+27,cy-15,fill=color,width=2);canvas.create_line(cx-27,cy+15,cx+27,cy+15,fill=color,width=2)
- def draw_report_icon(self,canvas,cx,cy,color):
-  canvas.create_line(cx-27,cy-32,cx+7,cy-32,cx+27,cy-12,cx+27,cy+35,cx-27,cy+35,cx-27,cy-32,fill=color,width=3);canvas.create_line(cx+7,cy-32,cx+7,cy-12,cx+27,cy-12,fill=color,width=3)
-  for i,h in enumerate((14,25,36)):canvas.create_rectangle(cx-15+i*12,cy+26-h,cx-8+i*12,cy+26,fill=color,outline=color)
- def draw_home(self):
-  cv=self.home_canvas;cv.delete('all');c=self.colors;w=max(cv.winfo_width(),760);h=max(cv.winfo_height(),600);left=30;right=30
-  cv.create_text(left,31,text='Operations Toolkit',font=('Segoe UI Semibold',28),fill=c['text'],anchor='nw')
-  cv.create_text(left,89,text='Choose a tool to get started',font=('Segoe UI',15),fill=c['muted'],anchor='nw')
-  cv.create_oval(w-140,31,w-130,41,fill='#4ea7c2',outline='');cv.create_text(w-20,28,text='Not connected',font=('Segoe UI',10),fill=c['muted'],anchor='ne')
-  gap=16;cards_y=139;cards_h=235;usable=w-left-right-gap*2;first=int(usable*.361);other=(usable-first)//2;widths=(first,other,usable-first-other);xs=(left,left+first+gap,left+first+gap+other+gap)
-  for i,(x,cw) in enumerate(zip(xs,widths)):
-   border=c['accent'] if i==0 else '#465564';self.rounded_rect(cv,x,cards_y,x+cw,cards_y+cards_h,7,fill=c['surface'],outline=border,width=1)
-  x,cw=xs[0],widths[0];self.draw_network_icon(cv,x+50,cards_y+78,c['accent']);tx=x+103
-  cv.create_text(tx,cards_y+32,text='cnMaestro Speed Manager',font=('Segoe UI Semibold',12),fill=c['text'],anchor='nw')
-  cv.create_text(tx,cards_y+65,text='Scan devices and manage speed packages in bulk',font=('Segoe UI',11),fill=c['muted'],anchor='nw',width=cw-118)
-  cv.create_oval(tx,cards_y+130,tx+11,cards_y+141,fill=c['accent'],outline='');cv.create_text(tx+21,cards_y+126,text='Available',font=('Segoe UI',11),fill=c['accent'],anchor='nw')
-  bx1,by1,bx2,by2=x+21,cards_y+168,x+150,cards_y+207;self.rounded_rect(cv,bx1,by1,bx2,by2,4,fill=c['accent'],outline=c['accent']);cv.create_text((bx1+bx2)//2,(by1+by2)//2,text='Open Tool',font=('Segoe UI Semibold',11),fill='#04131a')
-  self.home_open_region=(bx1,by1,bx2,by2)
-  x,cw=xs[1],widths[1];self.draw_globe_icon(cv,x+cw//2,cards_y+76,'#929daa');cv.create_text(x+cw//2,cards_y+137,text='Network Utilities',font=('Segoe UI Semibold',15),fill=c['text']);cv.create_text(x+cw//2,cards_y+180,text='Coming later',font=('Segoe UI',11),fill=c['muted'])
-  x,cw=xs[2],widths[2];self.draw_report_icon(cv,x+cw//2,cards_y+74,'#929daa');cv.create_text(x+cw//2,cards_y+137,text='Reporting',font=('Segoe UI Semibold',15),fill=c['text']);cv.create_text(x+cw//2,cards_y+180,text='Coming later',font=('Segoe UI',11),fill=c['muted'])
-  recent_y=403;recent_bottom=max(recent_y+215,h-39);self.rounded_rect(cv,left,recent_y,w-right,recent_bottom,6,fill=c['surface'],outline=c['border'],width=1);cv.create_text(left+18,recent_y+16,text='Recent activity',font=('Segoe UI Semibold',15),fill=c['text'],anchor='nw')
-  rows=self.audit_rows(3)
-  if not rows:
-   cv.create_line(left,recent_y+55,w-right,recent_y+55,fill=c['border']);cv.create_text((left+w-right)//2,recent_y+112,text='No activity yet',font=('Segoe UI Semibold',12),fill=c['text']);cv.create_text((left+w-right)//2,recent_y+140,text='Completed speed package changes will appear here.',font=('Segoe UI',10),fill=c['muted'])
-  else:
-   row_top=recent_y+49;row_h=49
-   for i,r in enumerate(rows):
-    y=row_top+i*row_h;cv.create_line(left,y,w-right,y,fill=c['border']);ok=bool(r['success']);color=c['success'] if ok else c['danger'];cv.create_oval(left+18,y+14,left+38,y+34,outline=color,width=2);cv.create_text(left+28,y+24,text='✓' if ok else '!',font=('Segoe UI Semibold',10),fill=color)
-    label=f"{r['name'] or r['mac']}  •  {r['old_package']} → {r['target_package']}";cv.create_text(left+52,y+16,text=label,font=('Segoe UI',10),fill=c['text'],anchor='nw')
-    stamp=str(r['timestamp']).replace('T',' ')[:16]+' UTC';cv.create_text(w-right-20,y+16,text=stamp,font=('Segoe UI',10),fill=c['muted'],anchor='ne')
- def refresh_home_activity(self):
-  if hasattr(self,'home_canvas'):self.draw_home()
- def build_tool(self):
-  p=self.pages['tools'];p.columnconfigure(0,weight=1);p.rowconfigure(4,weight=1);self.auth=tk.StringVar(value='https://cloud.cambiumnetworks.com');self.cid=tk.StringVar();self.sec=tk.StringVar();self.status=tk.StringVar(value=f'{len(self.rows)} cached');self.theme=tk.StringVar(value='Dark')
-  hdr=ttk.Frame(p);hdr.grid(row=0,column=0,sticky='ew',pady=(0,9));hdr.columnconfigure(0,weight=1);ttk.Label(hdr,text='cnMaestro Speed Manager',style='PageTitle.TLabel').grid(row=0,column=0,sticky='w');ttk.Label(hdr,text='Bulk package operations',style='Muted.TLabel').grid(row=1,column=0,sticky='w');tk.Label(hdr,text='  Available  ',font=('Segoe UI Semibold',8),fg='#092019',bg=self.colors['success'],padx=5,pady=2).grid(row=0,column=1,rowspan=2,sticky='e')
-  o,f=self.card(p,12,8);o.grid(row=1,column=0,sticky='ew',pady=(0,7));f.columnconfigure(0,weight=3,minsize=270);f.columnconfigure(1,weight=2,minsize=180);f.columnconfigure(2,weight=2,minsize=180)
-  for col,(label,var,show) in enumerate([('Auth URL',self.auth,''),('Client ID',self.cid,''),('Client secret',self.sec,'*')]):ttk.Label(f,text=label,style='SurfaceMuted.TLabel').grid(row=0,column=col,sticky='w',padx=(0,8));ttk.Entry(f,textvariable=var,show=show).grid(row=1,column=col,sticky='ew',padx=(0,8))
-  ttk.Button(f,text='Connect',style='Accent.TButton',command=self.connect).grid(row=1,column=3,sticky='e');ttk.Label(f,textvariable=self.status,style='SurfaceMuted.TLabel').grid(row=2,column=0,columnspan=4,sticky='w',pady=(5,0))
-  o,a=self.card(p,12,8);o.grid(row=2,column=0,sticky='ew',pady=(0,7));self.mac=tk.StringVar(value='0A:00:3E:80:42:EC');self.force=tk.BooleanVar(value=False);self.days=tk.StringVar(value='10');self.approx=tk.BooleanVar(value=False);self.tolerance=tk.StringVar(value='10');self.onlysel=tk.BooleanVar(value=False);self.seltext=tk.StringVar(value='0 selected')
-  ttk.Label(a,text='Scan one MAC',style='SurfaceMuted.TLabel').grid(row=0,column=0,sticky='w');ttk.Entry(a,textvariable=self.mac,width=20).grid(row=0,column=1,padx=(5,6));self.one=ttk.Button(a,text='Scan one',command=self.scan_one);self.one.grid(row=0,column=2);self.all=ttk.Button(a,text='Scan all SMs',command=self.scan_all);self.all.grid(row=0,column=3,padx=5);self.cancelb=ttk.Button(a,text='Cancel',command=lambda:self.cancel.set(),state='disabled');self.cancelb.grid(row=0,column=4);self.clearb=ttk.Button(a,text='Clear cache',command=self.clear_cache);self.clearb.grid(row=0,column=5,padx=(5,0))
-  ttk.Checkbutton(a,text='Force refresh cached',variable=self.force).grid(row=1,column=0,columnspan=2,sticky='w',pady=(6,0));ttk.Label(a,text='Include offline up to',style='SurfaceMuted.TLabel').grid(row=1,column=2,sticky='e',pady=(6,0));ttk.Entry(a,textvariable=self.days,width=5).grid(row=1,column=3,sticky='w',pady=(6,0));ttk.Label(a,text='days',style='SurfaceMuted.TLabel').grid(row=1,column=3,padx=(48,0),sticky='w',pady=(6,0));ttk.Checkbutton(a,text='Closest package',variable=self.approx,command=self.render).grid(row=1,column=4,sticky='w',pady=(6,0));ttk.Entry(a,textvariable=self.tolerance,width=5).grid(row=1,column=5,sticky='w',pady=(6,0));ttk.Label(a,text='% tolerance',style='SurfaceMuted.TLabel').grid(row=1,column=5,padx=(43,0),sticky='w',pady=(6,0))
-  o,h=self.card(p,12,8);o.grid(row=3,column=0,sticky='ew',pady=(0,7));self.pf=tk.StringVar(value='All packages');self.nf=tk.StringVar(value='All networks');self.tf=tk.StringVar(value='All towers');self.af=tk.StringVar(value='All APs');self.sf=tk.StringVar(value='All status ages');self.q=tk.StringVar();spec=[('Package',self.pf,['All packages']+list(PKGS)+[OTHER],15),('Network',self.nf,['All networks'],15),('Tower',self.tf,['All towers'],15),('AP',self.af,['All APs'],15),('Status age',self.sf,['All status ages','Online','Offline - all','Offline < 24 hours','Offline 1-7 days','Offline 7-30 days','Offline 30-90 days','Offline 90+ days'],17),('Search',self.q,None,18)];self.box=[]
-  for i,(n,v,vals,w) in enumerate(spec):
-   ttk.Label(h,text=n,style='SurfaceMuted.TLabel').grid(row=0,column=i,sticky='w',padx=(0,5));widget=ttk.Combobox(h,textvariable=v,values=vals,state='readonly',width=w) if vals else ttk.Entry(h,textvariable=v,width=w);widget.grid(row=1,column=i,sticky='ew',padx=(0,6));h.columnconfigure(i,weight=1)
-   if vals:widget.bind('<<ComboboxSelected>>',lambda e:self.render());self.box.append(widget)
-  self.q.trace_add('write',lambda *_:self.render());controls=ttk.Frame(h,style='Surface.TFrame');controls.grid(row=2,column=0,columnspan=6,sticky='ew',pady=(7,0));ttk.Button(controls,text='Select visible',command=self.select_visible).pack(side='left');ttk.Button(controls,text='Deselect visible',command=self.deselect_visible).pack(side='left',padx=4);ttk.Button(controls,text='Clear selection',command=self.clear_selection).pack(side='left');ttk.Checkbutton(controls,text='Show selected only',variable=self.onlysel,command=self.render).pack(side='left',padx=(12,5));ttk.Label(controls,textvariable=self.seltext,style='SurfaceMuted.TLabel').pack(side='left')
-  table_o,table=self.card(p,0,0);table_o.grid(row=4,column=0,sticky='nsew',pady=(0,7));table.columnconfigure(0,weight=1);table.rowconfigure(0,weight=1);self.cols=('select','name','mac','package','match','variance','network','tower','ap','online','stateage','rates','cache','stage','issue');heads=('Select','Customer','MAC','Exact package','Display match','DL / UL variance','Network','Tower','AP MAC','Online','Status age','DL / UL','Cache age','Progress','Issue');self.heads=dict(zip(self.cols,heads));self.tree=ttk.Treeview(table,columns=self.cols,show='headings',selectmode='none')
-  for col,n in zip(self.cols,heads):self.tree.heading(col,text=n,command=lambda c=col:self.sort(c));self.tree.column(col,width=65 if col=='select' else (180 if col in ('name','issue') else 115),anchor='center' if col=='select' else 'w',stretch=False)
+  if key not in self.pages:return
+  if key=='speed_manager':
+   service=self.service_navigation[0]
+   if not service['expanded']:self.toggle_service(service)
+  self.pages[key].tkraise();self.active_page=key;self.refresh_nav()
+ def refresh_nav(self):
+  c=self.colors
+  for key,(row,bar,ico,text) in self.nav_items.items():
+   active=key==self.active_page;bg='#123455' if active else c['sidebar'];row.configure(bg=bg);bar.configure(bg=c['accent'] if active else bg);ico.configure(bg=bg,fg=c['accent2'] if active else c['muted']);text.configure(bg=bg,fg=c['accent2'] if active else c['muted'])
+ def build_speed_manager(self):
+  p=self.pages['speed_manager'];p.columnconfigure(0,weight=1);p.rowconfigure(3,weight=1)
+  outer,f=self.card(p,10,7);outer.grid(row=0,column=0,sticky='ew',pady=(0,9));f.columnconfigure(0,weight=3);f.columnconfigure(1,weight=2);f.columnconfigure(2,weight=2)
+  for col,(label,var,show) in enumerate([('Endpoint',self.auth,''),('Client ID',self.cid,''),('Client Secret',self.sec,'*')]):
+   ttk.Label(f,text=label,style='SurfaceMuted.TLabel').grid(row=0,column=col,sticky='w',padx=(0,12));ttk.Entry(f,textvariable=var,show=show).grid(row=1,column=col,sticky='ew',padx=(0,12),pady=(2,0))
+  ttk.Button(f,text='Connect',style='Accent.TButton',command=self.connect).grid(row=1,column=3,padx=(2,14));ttk.Label(f,text='Status',style='SurfaceMuted.TLabel').grid(row=0,column=4,sticky='w');self.status_badge=tk.Label(f,textvariable=self.status,font=('Segoe UI Semibold',8),fg='#ff6961',bg='#2b1619',highlightbackground='#8e332f',highlightthickness=1,padx=9,pady=5);self.status_badge.grid(row=1,column=4,sticky='ew')
+  heading=ttk.Frame(p);heading.grid(row=1,column=0,sticky='ew',pady=(0,6));heading.columnconfigure(0,weight=1);ttk.Label(heading,text='Bulk Speed Changes',style='PageTitle.TLabel').grid(row=0,column=0,sticky='w');ttk.Button(heading,text='Scan & filters',command=self.open_controls).grid(row=0,column=1,sticky='e')
+  body=ttk.Frame(p);body.grid(row=2,column=0,rowspan=2,sticky='nsew');body.columnconfigure(0,weight=1);body.columnconfigure(1,minsize=222);body.rowconfigure(1,weight=1)
+  metrics=ttk.Frame(body);metrics.grid(row=0,column=0,sticky='ew',padx=(0,10),pady=(0,8));self.metric_vars={k:tk.StringVar(value='0') for k in ('devices','selected','online','unmatched')}
+  metric_spec=[('devices','Devices','♟','#198bff'),('selected','Selected','☑','#9c6cff'),('online','Online','⌁','#70d957'),('unmatched','Unmatched','?','#e2b900')]
+  for i,(key,label,icon,color) in enumerate(metric_spec):
+   metrics.columnconfigure(i,weight=1,uniform='metric');o,b=self.card(metrics,8,5);o.grid(row=0,column=i,sticky='ew',padx=(0,7) if i<3 else 0);tk.Label(b,text=icon,font=('Segoe UI Symbol',17),fg=color,bg=self.colors['surface'],width=2).pack(side='left',padx=(0,5));copy=ttk.Frame(b,style='Surface.TFrame');copy.pack(side='left',fill='both',expand=True);ttk.Label(copy,text=label,style='SurfaceMuted.TLabel').pack(anchor='w');ttk.Label(copy,textvariable=self.metric_vars[key],style='Metric.TLabel').pack(anchor='w')
+  table_o,table=self.card(body,0,0);table_o.grid(row=1,column=0,sticky='nsew',padx=(0,10));table.columnconfigure(0,weight=1);table.rowconfigure(0,weight=1)
+  self.cols=('select','name','mac','package','match','variance','network','tower','ap','online','stateage','rates','cache','stage','issue');heads=('','Name','MAC','Current Package','Display Match','DL / UL Variance','Network','Tower','AP MAC','Status','Status Age','DL / UL','Cache Age','Progress','Issue');self.heads=dict(zip(self.cols,heads));display=('select','name','mac','network','tower','package','online','match','variance','ap','stateage','rates','cache','stage','issue');self.tree=ttk.Treeview(table,columns=self.cols,displaycolumns=display,show='headings',selectmode='none')
+  widths={'select':30,'name':132,'mac':104,'network':84,'tower':84,'package':90,'online':70,'match':105,'variance':125,'ap':105,'stateage':105,'rates':85,'cache':75,'stage':110,'issue':170}
+  for col in self.cols:self.tree.heading(col,text=self.heads[col],command=lambda c=col:self.sort(c));self.tree.column(col,width=widths[col],anchor='center' if col=='select' else 'w',stretch=False)
   self.tree.bind('<Button-1>',self.tree_click);y=ttk.Scrollbar(table,orient='vertical',command=self.tree.yview);x=ttk.Scrollbar(table,orient='horizontal',command=self.tree.xview);self.tree.configure(yscrollcommand=y.set,xscrollcommand=x.set);self.tree.grid(row=0,column=0,sticky='nsew');y.grid(row=0,column=1,sticky='ns');x.grid(row=1,column=0,sticky='ew')
-  o,b=self.card(p,12,8);o.grid(row=5,column=0,sticky='ew');self.target=tk.StringVar(value='50 Mbps');self.write=tk.BooleanVar(value=False);self.confirm=tk.StringVar();ttk.Label(b,text='Publish and verify',style='CardTitle.TLabel').grid(row=0,column=0,columnspan=6,sticky='w',pady=(0,5));ttk.Label(b,text='Target',style='SurfaceMuted.TLabel').grid(row=1,column=0,sticky='w');ttk.Combobox(b,textvariable=self.target,values=list(PKGS),state='readonly',width=13).grid(row=1,column=1,sticky='w');ttk.Button(b,text='Preview checked',command=self.preview_rows).grid(row=1,column=2,padx=5,sticky='w');self.w=ttk.Checkbutton(b,text='Enable write actions',variable=self.write);self.w.grid(row=1,column=3,sticky='w');ttk.Label(b,text='Confirmation',style='SurfaceMuted.TLabel').grid(row=1,column=4,padx=(18,3),sticky='e');ttk.Entry(b,textvariable=self.confirm,width=22).grid(row=1,column=5,sticky='ew');b.columnconfigure(5,weight=1)
-  self.pub=ttk.Button(b,text='Publish and verify',style='Accent.TButton',command=self.execute);self.pub.grid(row=2,column=0,sticky='w',pady=(6,0));ttk.Button(b,text='Audit log',command=self.audit).grid(row=2,column=1,sticky='w',padx=5,pady=(6,0));ttk.Button(b,text='Check updates',command=lambda:self.check_updates(False)).grid(row=2,column=2,sticky='w',pady=(6,0));self.progress=ttk.Progressbar(b,mode='determinate');self.progress.grid(row=2,column=3,columnspan=2,sticky='ew',padx=(18,0),pady=(6,0));self.progtext=tk.StringVar(value='No publish active.');ttk.Label(b,textvariable=self.progtext,style='SurfaceMuted.TLabel').grid(row=2,column=5,sticky='e',padx=(8,0),pady=(6,0));self.out=tk.Text(b,height=2,width=1,bg=self.colors['surface2'],fg=self.colors['text'],insertbackground=self.colors['text'],relief='flat',highlightbackground=self.colors['border'],highlightthickness=1,font=('Consolas',8),wrap='none');self.out.grid(row=3,column=0,columnspan=6,sticky='ew',pady=(6,0))
- def build_audit_page(self):
-  p=self.pages['audit'];p.columnconfigure(0,weight=1);p.rowconfigure(2,weight=1);top=ttk.Frame(p);top.grid(row=0,column=0,sticky='ew');top.columnconfigure(0,weight=1);ttk.Label(top,text='Audit Log',style='Title.TLabel').grid(row=0,column=0,sticky='w');ttk.Button(top,text='Export CSV',style='Accent.TButton',command=self.export_audit_csv).grid(row=0,column=1,sticky='e');ttk.Label(p,text='Recorded cnMaestro package operations',style='Muted.TLabel').grid(row=1,column=0,sticky='w',pady=(2,14));o,b=self.card(p,0,0);o.grid(row=2,column=0,sticky='nsew');b.columnconfigure(0,weight=1);b.rowconfigure(0,weight=1);cols=('time','name','mac','old','target','job','state','verified','success','detail');heads=('Timestamp UTC','Customer','MAC','Old','Target','Job ID','Job state','Verified','Success','Detail');self.audit_tree=ttk.Treeview(b,columns=cols,show='headings')
-  for col,head in zip(cols,heads):self.audit_tree.heading(col,text=head);self.audit_tree.column(col,width=120 if col!='detail' else 210,stretch=False)
-  y=ttk.Scrollbar(b,orient='vertical',command=self.audit_tree.yview);x=ttk.Scrollbar(b,orient='horizontal',command=self.audit_tree.xview);self.audit_tree.configure(yscrollcommand=y.set,xscrollcommand=x.set);self.audit_tree.grid(row=0,column=0,sticky='nsew');y.grid(row=0,column=1,sticky='ns');x.grid(row=1,column=0,sticky='ew');self.audit_summary=tk.StringVar(value='No audit records');ttk.Label(p,textvariable=self.audit_summary,style='Muted.TLabel').grid(row=3,column=0,sticky='w',pady=(8,0))
- def audit_rows(self,limit=1000):
-  with sqlite3.connect(DB) as c:c.row_factory=sqlite3.Row;return [dict(r) for r in c.execute('SELECT * FROM audit ORDER BY id DESC LIMIT ?',(limit,))]
- def refresh_audit(self):
-  rows=self.audit_rows();self.audit_tree.delete(*self.audit_tree.get_children())
-  for r in rows:self.audit_tree.insert('', 'end',values=(r['timestamp'],r['name'],r['mac'],r['old_package'],r['target_package'],r['job_id'],r['job_state'],r['verified_package'],'Yes' if r['success'] else 'No',r['detail']))
-  self.audit_summary.set(f'{len(rows)} records  •  {DB}')
- def export_audit_csv(self):
-  rows=self.audit_rows()
-  if not rows:return messagebox.showinfo('Export audit log','There are no audit records to export.')
-  path=filedialog.asksaveasfilename(title='Export audit log',defaultextension='.csv',filetypes=[('CSV files','*.csv')],initialfile='operations-toolkit-audit.csv')
-  if not path:return
-  with open(path,'w',newline='',encoding='utf-8-sig') as f:w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
-  messagebox.showinfo('Audit log exported',f'{len(rows)} records exported to:\n{path}')
+  action_o,action=self.card(body,11,10);action_o.grid(row=0,column=1,rowspan=2,sticky='nsew');ttk.Label(action,text='Change speed package',style='CardTitle.TLabel').pack(anchor='w',pady=(0,15));ttk.Label(action,text='Target package',style='SurfaceMuted.TLabel').pack(anchor='w');self.target=tk.StringVar(value='50 Mbps');ttk.Combobox(action,textvariable=self.target,values=list(PKGS),state='readonly').pack(fill='x',pady=(4,10));ttk.Button(action,text='Preview Changes',style='Accent.TButton',command=self.preview_changes).pack(fill='x');tk.Frame(action,bg=self.colors['border'],height=1).pack(fill='x',pady=16);safe=tk.Frame(action,bg=self.colors['surface']);safe.pack(fill='x');tk.Label(safe,text='♢',font=('Segoe UI Symbol',15),fg=self.colors['accent2'],bg=self.colors['surface']).pack(side='left',anchor='n',padx=(0,7));note=tk.Frame(safe,bg=self.colors['surface']);note.pack(side='left',fill='x',expand=True);tk.Label(note,text='Safety note',font=('Segoe UI Semibold',8),fg=self.colors['text'],bg=self.colors['surface']).pack(anchor='w');tk.Label(note,text='This action will change the speed package for all selected devices. No changes will be applied until you confirm on the preview screen.',font=('Segoe UI',8),fg=self.colors['muted'],bg=self.colors['surface'],justify='left',wraplength=162).pack(anchor='w',pady=(6,0))
+ def build_control_window(self):
+  self.controls=tk.Toplevel(self);self.controls.title('Scan & filters');self.controls.geometry('860x330');self.controls.configure(bg=self.colors['bg']);self.controls.withdraw();self.controls.protocol('WM_DELETE_WINDOW',self.controls.withdraw);p=ttk.Frame(self.controls,padding=14);p.pack(fill='both',expand=True)
+  self.mac=tk.StringVar(value='0A:00:3E:80:42:EC');self.force=tk.BooleanVar(value=False);self.days=tk.StringVar(value='10');self.approx=tk.BooleanVar(value=False);self.tolerance=tk.StringVar(value='10');self.onlysel=tk.BooleanVar(value=False);self.seltext=tk.StringVar(value='0 selected')
+  o,a=self.card(p,12,10);o.pack(fill='x',pady=(0,10));ttk.Label(a,text='Scan one MAC',style='SurfaceMuted.TLabel').grid(row=0,column=0,sticky='w');ttk.Entry(a,textvariable=self.mac,width=22).grid(row=1,column=0,padx=(0,6),pady=(3,0));self.one=ttk.Button(a,text='Scan one',command=self.scan_one);self.one.grid(row=1,column=1);self.all=ttk.Button(a,text='Scan all SMs',command=self.scan_all);self.all.grid(row=1,column=2,padx=5);self.cancelb=ttk.Button(a,text='Cancel scan',command=lambda:self.cancel.set(),state='disabled');self.cancelb.grid(row=1,column=3);self.clearb=ttk.Button(a,text='Clear cache',command=self.clear_cache);self.clearb.grid(row=1,column=4,padx=(5,0));ttk.Checkbutton(a,text='Force refresh cached',variable=self.force).grid(row=2,column=0,sticky='w',pady=(8,0));ttk.Label(a,text='Include offline up to',style='SurfaceMuted.TLabel').grid(row=2,column=1,sticky='e',pady=(8,0));ttk.Entry(a,textvariable=self.days,width=5).grid(row=2,column=2,sticky='w',pady=(8,0));ttk.Label(a,text='days',style='SurfaceMuted.TLabel').grid(row=2,column=2,padx=(42,0),sticky='w',pady=(8,0))
+  o,h=self.card(p,12,10);o.pack(fill='both',expand=True);self.pf=tk.StringVar(value='All packages');self.nf=tk.StringVar(value='All networks');self.tf=tk.StringVar(value='All towers');self.af=tk.StringVar(value='All APs');self.sf=tk.StringVar(value='All status ages');self.q=tk.StringVar();spec=[('Package',self.pf,['All packages']+list(PKGS)+[OTHER],15),('Network',self.nf,['All networks'],14),('Tower',self.tf,['All towers'],14),('AP',self.af,['All APs'],14),('Status age',self.sf,['All status ages','Online','Offline - all','Offline < 24 hours','Offline 1-7 days','Offline 7-30 days','Offline 30-90 days','Offline 90+ days'],17)];self.box=[]
+  for i,(n,v,vals,w) in enumerate(spec):ttk.Label(h,text=n,style='SurfaceMuted.TLabel').grid(row=0,column=i,sticky='w');b=ttk.Combobox(h,textvariable=v,values=vals,state='readonly',width=w);b.grid(row=1,column=i,sticky='ew',padx=(0,6),pady=(3,8));b.bind('<<ComboboxSelected>>',lambda e:self.render());self.box.append(b);h.columnconfigure(i,weight=1)
+  ttk.Label(h,text='Search',style='SurfaceMuted.TLabel').grid(row=2,column=0,sticky='w');ttk.Entry(h,textvariable=self.q).grid(row=3,column=0,columnspan=2,sticky='ew',padx=(0,8),pady=(3,0));self.q.trace_add('write',lambda *_:self.render());ttk.Checkbutton(h,text='Closest downstream package',variable=self.approx,command=self.render).grid(row=3,column=2,sticky='w');ttk.Entry(h,textvariable=self.tolerance,width=5).grid(row=3,column=3,sticky='w');ttk.Label(h,text='% tolerance',style='SurfaceMuted.TLabel').grid(row=3,column=3,padx=(43,0),sticky='w');ttk.Button(h,text='Select visible',command=self.select_visible).grid(row=4,column=0,sticky='w',pady=(10,0));ttk.Button(h,text='Deselect visible',command=self.deselect_visible).grid(row=4,column=1,sticky='w',pady=(10,0));ttk.Button(h,text='Clear selection',command=self.clear_selection).grid(row=4,column=2,sticky='w',pady=(10,0));ttk.Checkbutton(h,text='Show selected only',variable=self.onlysel,command=self.render).grid(row=4,column=3,sticky='w',pady=(10,0));ttk.Label(h,textvariable=self.seltext,style='SurfaceMuted.TLabel').grid(row=4,column=4,sticky='e',pady=(10,0))
+ def open_controls(self):self.controls.deiconify();self.controls.transient(self);self.controls.lift();self.controls.focus_force()
+ def build_preview_window(self):
+  self.preview_window=tk.Toplevel(self);self.preview_window.title('Preview and publish');self.preview_window.geometry('760x500');self.preview_window.configure(bg=self.colors['bg']);self.preview_window.withdraw();self.preview_window.protocol('WM_DELETE_WINDOW',self.preview_window.withdraw);p=ttk.Frame(self.preview_window,padding=14);p.pack(fill='both',expand=True);o,b=self.card(p,12,10);o.pack(fill='x',pady=(0,10));self.write=tk.BooleanVar(value=False);self.confirm=tk.StringVar();self.w=ttk.Checkbutton(b,text='Enable write actions',variable=self.write);self.w.grid(row=0,column=0,sticky='w');ttk.Label(b,text='Confirmation',style='SurfaceMuted.TLabel').grid(row=0,column=1,padx=(18,4));ttk.Entry(b,textvariable=self.confirm,width=25).grid(row=0,column=2);self.pub=ttk.Button(b,text='Publish and verify',style='Accent.TButton',command=self.execute);self.pub.grid(row=0,column=3,padx=(8,0));b.columnconfigure(2,weight=1);self.progress=ttk.Progressbar(b,mode='determinate');self.progress.grid(row=1,column=0,columnspan=4,sticky='ew',pady=(10,4));self.progtext=tk.StringVar(value='No publish operation active.');ttk.Label(b,textvariable=self.progtext,style='SurfaceMuted.TLabel').grid(row=2,column=0,columnspan=4,sticky='w');self.out=tk.Text(p,bg='#0d1823',fg=self.colors['text'],insertbackground=self.colors['text'],relief='flat',highlightbackground=self.colors['border'],highlightthickness=1,font=('Consolas',8),wrap='none');self.out.pack(fill='both',expand=True);ttk.Label(p,text='Type the required confirmation phrase only after reviewing every selected device.',style='Muted.TLabel').pack(anchor='w',pady=(8,0))
+ def preview_changes(self):
+  self.preview_rows()
+  if self.preview:self.preview_window.deiconify();self.preview_window.transient(self);self.preview_window.lift();self.preview_window.focus_force()
+ def update_metrics(self):
+  if not hasattr(self,'metric_vars'):return
+  vals=list(self.rows.values());self.metric_vars['devices'].set(str(len(vals)));self.metric_vars['selected'].set(str(len(self.checked)));self.metric_vars['online'].set(str(sum(bool(r.get('online')) for r in vals)));self.metric_vars['unmatched'].set(str(sum(r.get('package')==OTHER for r in vals)))
+ def build_overview(self):
+  p=self.pages['overview'];ttk.Label(p,text='Overview',style='PageTitle.TLabel').pack(anchor='w');ttk.Label(p,text='Operations Toolkit services and operational status',style='Muted.TLabel').pack(anchor='w',pady=(3,15));o,b=self.card(p,14,12);o.pack(fill='x');ttk.Label(b,text='cnMaestro',style='CardTitle.TLabel').pack(anchor='w');ttk.Label(b,text='Speed Manager is available from the cnMaestro service menu.',style='SurfaceMuted.TLabel').pack(anchor='w',pady=(5,10));ttk.Button(b,text='Open Speed Manager',style='Accent.TButton',command=lambda:self.show_page('speed_manager')).pack(anchor='w')
+ def build_activity(self):
+  p=self.pages['activity'];ttk.Label(p,text='Activity',style='PageTitle.TLabel').pack(anchor='w');ttk.Label(p,text='Review the existing Speed Manager audit log.',style='Muted.TLabel').pack(anchor='w',pady=(3,15));o,b=self.card(p,14,12);o.pack(fill='x');ttk.Label(b,text='Audit Log',style='CardTitle.TLabel').pack(anchor='w');ttk.Label(b,text='Completed package operations are recorded in the existing audit database.',style='SurfaceMuted.TLabel').pack(anchor='w',pady=(5,10));ttk.Button(b,text='Open Audit Log',style='Accent.TButton',command=self.audit).pack(anchor='w')
  def build_settings(self):
-  p=self.pages['settings'];p.columnconfigure(0,weight=1);ttk.Label(p,text='Settings',style='Title.TLabel').grid(row=0,column=0,sticky='w');ttk.Label(p,text='Existing application paths and update status',style='Muted.TLabel').grid(row=1,column=0,sticky='w',pady=(2,18));o,b=self.card(p,16,14);o.grid(row=2,column=0,sticky='ew',pady=(0,12));self.card_heading(b,'Application');grid=ttk.Frame(b,style='Surface.TFrame');grid.pack(fill='x',pady=(9,0));grid.columnconfigure(1,weight=1)
-  for i,(label,value) in enumerate([('Appearance','Dark'),('Data directory',str(DATA)),('Audit database',str(DB)),('Update manifest',str(UPDATE_CONFIG))]):ttk.Label(grid,text=label,style='SurfaceMuted.TLabel').grid(row=i,column=0,sticky='nw',pady=4,padx=(0,18));ttk.Label(grid,text=value,style='Surface.TLabel',wraplength=700).grid(row=i,column=1,sticky='w',pady=4)
-  o,b=self.card(p,16,14);o.grid(row=3,column=0,sticky='ew',pady=(0,12));self.card_heading(b,'Updates');ttk.Label(b,textvariable=self.update_status,style='SurfaceMuted.TLabel').pack(anchor='w',pady=(8,10));ttk.Button(b,text='Check for updates',command=lambda:self.check_updates(False)).pack(anchor='w')
-  o,b=self.card(p,16,14);o.grid(row=4,column=0,sticky='ew');self.card_heading(b,'About');ttk.Label(b,text='Operations Toolkit',style='ToolTitle.TLabel').pack(anchor='w',pady=(8,2));ttk.Label(b,text=f'Version {APP_VERSION}  •  Includes the cnMaestro Speed Manager module',style='SurfaceMuted.TLabel').pack(anchor='w');ttk.Label(b,text='Built with standard Python Tkinter/ttk components.',style='SurfaceMuted.TLabel').pack(anchor='w',pady=(3,0))
+  p=self.pages['settings'];ttk.Label(p,text='Settings',style='PageTitle.TLabel').grid(row=0,column=0,sticky='w');ttk.Label(p,text='Application appearance, paths, and updates',style='Muted.TLabel').grid(row=1,column=0,sticky='w',pady=(3,15));o,b=self.card(p,14,12);o.grid(row=2,column=0,sticky='ew');ttk.Label(b,text='Application',style='CardTitle.TLabel').grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,8));ttk.Label(b,text='Appearance',style='SurfaceMuted.TLabel').grid(row=1,column=0,sticky='w',pady=4);tb=ttk.Combobox(b,textvariable=self.theme,values=['System','Light','Dark'],state='readonly',width=12);tb.grid(row=1,column=1,sticky='w',padx=(18,0));tb.bind('<<ComboboxSelected>>',lambda e:self.apply_theme())
+  for i,(label,value) in enumerate([('Data directory',str(DATA)),('Audit database',str(DB)),('Update manifest',str(UPDATE_CONFIG))],2):ttk.Label(b,text=label,style='SurfaceMuted.TLabel').grid(row=i,column=0,sticky='nw',pady=4);ttk.Label(b,text=value,style='Surface.TLabel',wraplength=700).grid(row=i,column=1,sticky='w',padx=(18,0),pady=4)
+  ttk.Button(b,text='Check for updates',command=lambda:self.check_updates(False)).grid(row=5,column=0,sticky='w',pady=(12,0))
  def bg(self,coro,done):
   def run():
    try:r=asyncio.run(coro);self.after(0,lambda r=r:done(r,None))
@@ -293,8 +256,8 @@ class App(tk.Tk):
   self.tree.delete(*self.tree.get_children());rows=sorted(self.filt(),key=self.sortkey,reverse=self.sort_rev)
   for c,h in self.heads.items():self.tree.heading(c,text=h+(' ▼' if c==self.sort_col and self.sort_rev else ' ▲' if c==self.sort_col else ''))
   for r in rows:
-   m=r['mac'];s=self.suggestion(r);var=f"DL {s['dl_pct']:+.1f}% / UL {s['ul_pct']:+.1f}%" if s else '';self.tree.insert('', 'end',iid=m,values=('☑' if m in self.checked else '☐',r['name'],m,r['package'],self.displaypkg(r),var,r['network'],r['tower'],r['ap_mac'],r['online'],('Online for ' if r.get('online') else 'Offline for ')+age(r.get('status_time')),f"{r['downlink']} / {r['uplink']}",str(r.get('cache_age_hours',0))+'h',self.job_status.get(m,''),r['error']))
-  self.seltext.set(f'{len(self.checked)} selected')
+   m=r['mac'];s=self.suggestion(r);var=f"DL {s['dl_pct']:+.1f}% / UL {s['ul_pct']:+.1f}%" if s else '';self.tree.insert('', 'end',iid=m,values=('☑' if m in self.checked else '☐',r['name'],m,r['package'],self.displaypkg(r),var,r['network'],r['tower'],r['ap_mac'],('● Online' if r.get('online') else '● Offline'),('Online for ' if r.get('online') else 'Offline for ')+age(r.get('status_time')),f"{r['downlink']} / {r['uplink']}",str(r.get('cache_age_hours',0))+'h',self.job_status.get(m,''),r['error']))
+  self.seltext.set(f'{len(self.checked)} selected');self.update_metrics()
  def tree_click(self,e):
   if self.tree.identify_region(e.x,e.y)!='cell':return
   if self.tree.identify_column(e.x)!='#1':return
@@ -344,15 +307,22 @@ class App(tk.Tk):
   self.setbusy(False)
   if e:self.show(str(e));messagebox.showerror('Publish error',str(e));return
   rows,ok,fail=r;self.show(rows);self.progtext.set(f'Completed | Success {ok} | Failed {fail}');messagebox.showinfo('Batch completed' if not fail else 'Batch completed with issues',f'{len(rows)} processed\n{ok} successful\n{fail} failed'+('\n\nReview the audit log for details.' if fail else ''))
- def audit(self):self.show_page('audit')
+ def audit(self):
+  w=tk.Toplevel(self);w.title('Audit log');w.geometry('1180x520');cols=('time','name','mac','old','target','job','state','verified','success','detail');heads=('Timestamp UTC','Customer','MAC','Old','Target','Job ID','Job state','Verified','Success','Detail');tree=ttk.Treeview(w,columns=cols,show='headings')
+  for c,h in zip(cols,heads):tree.heading(c,text=h);tree.column(c,width=115)
+  y=ttk.Scrollbar(w,orient='vertical',command=tree.yview);x=ttk.Scrollbar(w,orient='horizontal',command=tree.xview);tree.configure(yscrollcommand=y.set,xscrollcommand=x.set);tree.grid(row=0,column=0,sticky='nsew');y.grid(row=0,column=1,sticky='ns');x.grid(row=1,column=0,sticky='ew');w.rowconfigure(0,weight=1);w.columnconfigure(0,weight=1)
+  with sqlite3.connect(DB) as c:c.row_factory=sqlite3.Row;rows=[dict(r) for r in c.execute('SELECT * FROM audit ORDER BY id DESC LIMIT 1000')]
+  for r in rows:tree.insert('', 'end',values=(r['timestamp'],r['name'],r['mac'],r['old_package'],r['target_package'],r['job_id'],r['job_state'],r['verified_package'],'Yes' if r['success'] else 'No',r['detail']))
+  ttk.Label(w,text=f'{len(rows)} records | {DB}').grid(row=2,column=0,sticky='w',padx=5,pady=5)
  def apply_theme(self):
-  self.theme.set('Dark');SETTINGS.write_text(json.dumps({'theme':'Dark'}));self.render()
- def load_settings(self):self.apply_theme()
+  mode=self.theme.get();dark=mode=='Dark';bg='#1e1e1e' if dark else '#f3f3f3';fg='#f0f0f0' if dark else '#111111';field='#2b2b2b' if dark else '#ffffff';accent='#3a3a3a' if dark else '#e7e7e7';self.configure(bg=bg);self.style.theme_use('clam');self.style.configure('.',background=bg,foreground=fg,fieldbackground=field);self.style.configure('Treeview',background=field,foreground=fg,fieldbackground=field,rowheight=24);self.style.configure('Treeview.Heading',background=accent,foreground=fg);self.style.map('Treeview',background=[('selected','#225a8f' if dark else '#cce5ff')],foreground=[('selected','#ffffff' if dark else '#000000')]);self.style.configure('TEntry',fieldbackground=field);self.style.configure('TCombobox',fieldbackground=field);self.out.configure(bg=field,fg=fg,insertbackground=fg);SETTINGS.write_text(json.dumps({'theme':mode}));self.render()
+ def load_settings(self):
+  try:self.theme.set(json.loads(SETTINGS.read_text()).get('theme','System'))
+  except:pass
+  self.apply_theme()
  def vt(self,v):return tuple(int(x) for x in re.findall(r'\d+',str(v))[:4])
  def check_updates(self,auto=False):
-  self.update_status.set('Checking for updates...')
   if not UPDATE_CONFIG.exists():
-   self.update_status.set('Updates are not configured')
    if not auto:messagebox.showinfo('Updates not configured',f'Create update_config.json beside the app.\n{UPDATE_CONFIG}')
    return
   try:url=json.loads(UPDATE_CONFIG.read_text())['manifest_url'];url+=('&' if '?' in url else '?')+'t='+str(int(time.time()))
@@ -362,11 +332,10 @@ class App(tk.Tk):
     with httpx.Client(timeout=20,verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),follow_redirects=True) as c:m=c.get(url);m.raise_for_status();b=m.json()
     self.after(0,lambda:self.update_result(b,auto))
    except Exception as e:
-    self.after(0,lambda e=e:self.update_status.set('Update check failed: '+str(e)))
-    if not auto:self.after(0,lambda e=e:messagebox.showerror('Update check failed',str(e)))
+    if not auto:self.after(0,lambda:messagebox.showerror('Update check failed',str(e)))
   threading.Thread(target=work,daemon=True).start()
  def update_result(self,m,auto):
-  v=str(m.get('version','0'));self.update_status.set(f'Version {v} is available' if self.vt(v)>self.vt(APP_VERSION) else f'Version {APP_VERSION} is current')
+  v=str(m.get('version','0'))
   if self.vt(v)>self.vt(APP_VERSION):
    if messagebox.askyesno('Update available',f'Version {v} is available.\n\n{m.get("notes","")}\n\nOpen the approved download location?'):webbrowser.open(str(m.get('download_url','')))
   elif not auto:messagebox.showinfo('No update available',f'Version {APP_VERSION} is current.')
