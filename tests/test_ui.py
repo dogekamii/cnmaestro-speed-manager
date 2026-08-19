@@ -309,3 +309,113 @@ def test_session_registration_race_closes_provisional_adapter_on_failure(monkeyp
     finally:
         app._shutdown()
     assert events == ["close-called"]
+
+
+def test_shutdown_during_pending_canary_approval_closes_worker_and_store(monkeypatch) -> None:
+    import sqlite3
+    import time
+
+    from operations_toolkit.modules.cnmaestro import ui as cn_ui
+    from operations_toolkit.modules.cnmaestro.adapters import DemoCnMaestroAdapter
+    from operations_toolkit.modules.cnmaestro.planning import PlanBuilder, classify_inventory
+
+    app = Application(demo=False)
+    app.show_view("Bulk Speed Changes")
+    view = app._views["Bulk Speed Changes"]
+    adapter = DemoCnMaestroAdapter()
+    view.set_adapter(adapter)
+    app.context.session_gate.replace(
+        adapter, lambda: app._async_worker.run(adapter.close(), timeout=15)
+    )
+    inventory = classify_inventory(app._async_worker.run(adapter.inventory()), view.catalog)
+    view.devices = inventory
+    view.plan = PlanBuilder(view.catalog).build(
+        inventory[:2], "50 Mbps", connection_identity=adapter.connection_identity
+    )
+    view.publish_button.configure(state="normal")
+    monkeypatch.setattr(
+        cn_ui.tb.dialogs.Querybox,
+        "get_string",
+        lambda **_kwargs: "APPLY SPEED CHANGES",
+    )
+    monkeypatch.setattr(cn_ui.messagebox, "askyesno", lambda *_args, **_kwargs: True)
+
+    view.publish()
+    deadline = time.monotonic() + 3
+    while view._approval_requests.empty() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not view._approval_requests.empty()
+    with view._approval_requests.mutex:
+        decision = view._approval_requests.queue[0][1]
+
+    app._shutdown()
+    app._shutdown()
+
+    assert decision.done()
+    assert decision.cancelled() or decision.result() is False
+    assert not app._async_worker._thread.is_alive()
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        _ = view.store.schema_version
+
+
+@pytest.mark.parametrize("decision_state", ["cancelled", "completed"])
+def test_bulk_view_close_is_idempotent_with_finished_approval_decisions(
+    decision_state: str, monkeypatch
+) -> None:
+    import sqlite3
+    from concurrent.futures import Future
+
+    from operations_toolkit.modules.cnmaestro.publishing import PublishResult
+
+    app = Application(demo=False)
+    app.show_view("Bulk Speed Changes")
+    view = app._views["Bulk Speed Changes"]
+    decision: Future[bool] = Future()
+    if decision_state == "cancelled":
+        decision.cancel()
+    else:
+        decision.set_result(True)
+    view._approval_requests.put((PublishResult(1, 0, 0, 1), decision))
+    close_calls = 0
+    original_close = view.store.close
+
+    def close_store() -> None:
+        nonlocal close_calls
+        close_calls += 1
+        original_close()
+
+    monkeypatch.setattr(view.store, "close", close_store)
+    try:
+        view.close()
+        view.close()
+
+        assert close_calls == 1
+        assert decision.cancelled() if decision_state == "cancelled" else decision.result() is True
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            _ = view.store.schema_version
+    finally:
+        app._shutdown()
+
+
+def test_bulk_view_close_closes_store_when_approval_cleanup_raises() -> None:
+    import sqlite3
+    from concurrent.futures import Future
+
+    from operations_toolkit.modules.cnmaestro.publishing import PublishResult
+
+    class BrokenDecision(Future[bool]):
+        def set_result(self, result: bool) -> None:
+            raise RuntimeError("synthetic approval cleanup failure")
+
+    app = Application(demo=False)
+    app.show_view("Bulk Speed Changes")
+    view = app._views["Bulk Speed Changes"]
+    view._approval_requests.put((PublishResult(1, 0, 0, 1), BrokenDecision()))
+    try:
+        with pytest.raises(RuntimeError, match="synthetic approval cleanup failure"):
+            view.close()
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            _ = view.store.schema_version
+        view.close()
+    finally:
+        app._shutdown()

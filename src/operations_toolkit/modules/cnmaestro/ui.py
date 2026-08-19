@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import queue
 from collections.abc import Callable
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
+from contextlib import suppress
 from datetime import UTC
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -286,13 +287,17 @@ class BulkSpeedChangesView(tb.Frame):
         if self._closed:
             return
         self._closed = True
-        while True:
-            try:
-                _result, decision = self._approval_requests.get_nowait()
-            except queue.Empty:
-                break
-            decision.set_result(False)
-        self.store.close()
+        try:
+            while True:
+                try:
+                    _result, decision = self._approval_requests.get_nowait()
+                except queue.Empty:
+                    break
+                if not decision.done():
+                    with suppress(InvalidStateError):
+                        decision.set_result(False)
+        finally:
+            self.store.close()
 
 
 class AuditRecoveryView(tb.Frame):
