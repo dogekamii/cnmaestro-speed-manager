@@ -5,8 +5,8 @@ import tkinter as tk
 from tkinter import ttk
 import unittest
 
-_TEST_DATA_ROOT = tempfile.TemporaryDirectory()
-os.environ["LOCALAPPDATA"] = _TEST_DATA_ROOT.name
+_TEST_DATA_ROOT = tempfile.mkdtemp()
+os.environ["LOCALAPPDATA"] = _TEST_DATA_ROOT
 os.environ["OPERATIONS_TOOLKIT_PREVIEW"] = "1"
 
 import cnmaestro_speed_manager as toolkit
@@ -16,7 +16,7 @@ class InlineToolViewTests(unittest.TestCase):
     def setUp(self):
         self.app = toolkit.App()
         self.app.withdraw()
-        self.app.update_idletasks()
+        self.app.update()
 
     def tearDown(self):
         self.app.destroy()
@@ -83,7 +83,7 @@ class InlineToolViewTests(unittest.TestCase):
     def test_open_controls_keeps_integrated_speed_manager_workspace(self):
         self.app.deiconify()
         self.app.open_controls()
-        self.app.update_idletasks()
+        self.app.update()
 
         self.assertTrue(self.app.pages["speed_manager"].winfo_ismapped())
         self.assertTrue(self.app.controls.winfo_ismapped())
@@ -103,7 +103,7 @@ class InlineToolViewTests(unittest.TestCase):
         self.app.deiconify()
 
         self.app.preview_changes()
-        self.app.update_idletasks()
+        self.app.update()
 
         self.assertEqual(len(self.app.preview), 1)
         self.assertTrue(self.app.pages["speed_manager"].winfo_ismapped())
@@ -123,7 +123,7 @@ class InlineToolViewTests(unittest.TestCase):
             )
         self.app.deiconify()
         self.app.show_page("audit")
-        self.app.update_idletasks()
+        self.app.update()
 
         self.assertTrue(self.app.pages["audit"].winfo_ismapped())
         self.assertEqual(self.app.active_page, "audit")
@@ -137,7 +137,7 @@ class InlineToolViewTests(unittest.TestCase):
     def test_packaged_smoke_path_exercises_integrated_actions(self):
         self.app.deiconify()
         self.app.smoke_inline_views()
-        self.app.update_idletasks()
+        self.app.update()
 
         self.assertEqual(self.app.title(), "Operations Toolkit - inline views smoke complete")
         self.assertTrue(self.app.pages["speed_manager"].winfo_ismapped())
