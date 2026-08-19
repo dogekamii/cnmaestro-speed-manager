@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from keyring.errors import PasswordDeleteError
@@ -606,7 +607,9 @@ class SecretSurfaceTests(unittest.TestCase):
             old_db = toolkit.DB
             toolkit.DB = database
             try:
-                toolkit.initdb()
+                with contextlib.closing(sqlite3.connect(database)) as connection:
+                    connection.execute("CREATE TABLE surface_probe(value TEXT)")
+                    connection.commit()
                 app = toolkit.App.__new__(toolkit.App)
                 app.cid = FakeVar("surface-client")
                 app.sec = FakeVar(secret)
