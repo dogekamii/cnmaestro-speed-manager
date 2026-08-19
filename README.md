@@ -1,6 +1,6 @@
 # Operations Toolkit
 
-**Version 2.0.0-beta.1** — a modular, safety-first Windows desktop for deliberate infrastructure operations. The first first-party provider is **cnMaestro Bulk Speed Changes**. The established v1.1.0 Speed Manager remains the stable baseline; this beta does not replace or delete it.
+**Version 2.0.0-beta.2** — a modular, safety-first Windows desktop for deliberate infrastructure operations. The first first-party provider is **cnMaestro Bulk Speed Changes**. The established v1.1.0 Speed Manager remains the stable baseline; this beta does not replace or delete it.
 
 > The beta EXE is unsigned and may trigger Microsoft SmartScreen. There is no silent installer or silent update. Verify `SHA256SUMS` before opening a downloaded executable.
 
@@ -13,6 +13,7 @@
 - SQLite WAL write-ahead state machine: `planned → submitting → submitted → job_known → verified`, plus `failed` and `unknown`.
 - Audit/recovery viewer and CSV/JSON exports with exact before/target/verified rates and scope.
 - Safe GET retries with bounded exponential backoff/jitter and shared 429 handling. PUT is attempted once; timeout/connection loss is `UNKNOWN` and requires reconciliation.
+- Regional cnMaestro token redirects are accepted only as HTTPS base URLs on port 443 when the hostname is the authentication host, an exact approved host, or a DNS-label-boundary subdomain of `cloud.cambiumnetworks.com`.
 
 ## Install and run from source
 
@@ -31,7 +32,7 @@ Live mode:
 python -m operations_toolkit
 ```
 
-Credentials are kept only in memory, cleared from the secret field after connection, and cleared with tokens when a session closes. Only HTTPS endpoints are accepted; localhost HTTP is available solely through explicit test-only APIs. Token redirects must match the authentication host or configured allowlist.
+Credentials are kept only in memory, cleared from the secret field after connection, and cleared with tokens when a session closes. Only HTTPS endpoints are accepted; localhost HTTP is available solely through explicit test-only APIs. Token redirects must be credential-free HTTPS base URLs on port 443 and match the authentication host, an exact approved host, or the configured DNS suffix at a label boundary.
 
 ## Safe operating flow
 

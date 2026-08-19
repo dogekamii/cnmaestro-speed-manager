@@ -59,6 +59,7 @@ async def test_live_job_status_polls_to_terminal_state_with_bounded_waits() -> N
         "client-id",
         "client-secret",
         approved_redirect_hosts={"api.example.test"},
+        approved_redirect_suffixes=set(),
         client=client,  # type: ignore[arg-type]
         job_poll_attempts=3,
         job_poll_interval=0.25,
@@ -81,6 +82,7 @@ async def test_live_job_status_returns_timed_out_after_bounded_poll_budget() -> 
         "client-id",
         "client-secret",
         approved_redirect_hosts={"api.example.test"},
+        approved_redirect_suffixes=set(),
         client=client,  # type: ignore[arg-type]
         job_poll_attempts=2,
         job_poll_interval=0,
@@ -102,6 +104,7 @@ async def test_live_close_clears_all_credential_and_session_state_idempotently()
         "client-id",
         "client-secret",
         approved_redirect_hosts={"api.example.test"},
+        approved_redirect_suffixes=set(),
         client=client,  # type: ignore[arg-type]
     )
     await adapter.connect()
@@ -167,6 +170,7 @@ async def test_live_adapter_connect_inventory_pull_submit_and_close_contract() -
         "client-id",
         "client-secret",
         approved_redirect_hosts={"api.example.test"},
+        approved_redirect_suffixes=set(),
         client=client,  # type: ignore[arg-type]
         sleep=lambda _seconds: None,
     )
@@ -181,4 +185,64 @@ async def test_live_adapter_connect_inventory_pull_submit_and_close_contract() -
     assert inventory[0].online is True
     assert submission.job_id == "job-7"
     assert [method for method, _url in client.calls].count("PUT") == 1
+    assert client.closed is True
+
+
+class RedirectClient:
+    def __init__(self, redirect: str) -> None:
+        self.redirect = redirect
+        self.headers: dict[str, str] = {}
+        self.closed = False
+
+    async def post(self, url: str, **kwargs: object) -> Response:
+        assert url.endswith("/api/v2/access/token")
+        return Response({"access_token": "secret-token", "redirect_uri": self.redirect})
+
+    async def request(self, method: str, url: str, **kwargs: object) -> Response:
+        raise AssertionError("no API request expected")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_live_adapter_accepts_recovered_regional_redirect_via_explicit_suffix_policy() -> None:
+    redirect = "https://us-e1-s2-jwwsc39qdd.cloud.cambiumnetworks.com:443"
+    client = RedirectClient(redirect)
+    adapter = LiveCnMaestroAdapter(
+        "https://cloud.cambiumnetworks.com",
+        "client-id",
+        "client-secret",
+        approved_redirect_hosts={"api.cambiumnetworks.com"},
+        approved_redirect_suffixes={"cloud.cambiumnetworks.com"},
+        client=client,  # type: ignore[arg-type]
+    )
+
+    assert await adapter.connect() == redirect
+    assert client.headers["Authorization"] == "Bearer secret-token"
+    await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_rejected_redirect_never_retains_token_and_close_clears_session_state() -> None:
+    client = RedirectClient("https://cloud.cambiumnetworks.com.evil.test")
+    adapter = LiveCnMaestroAdapter(
+        "https://cloud.cambiumnetworks.com",
+        "client-id",
+        "client-secret",
+        approved_redirect_hosts={"api.cambiumnetworks.com"},
+        approved_redirect_suffixes={"cloud.cambiumnetworks.com"},
+        client=client,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValueError, match=r"cloud\.cambiumnetworks\.com\.evil\.test"):
+        await adapter.connect()
+
+    assert adapter._token is None
+    assert adapter._base_url is None
+    assert "Authorization" not in client.headers
+
+    await adapter.close()
+    assert adapter._client_id == ""
+    assert adapter._client_secret == ""
     assert client.closed is True

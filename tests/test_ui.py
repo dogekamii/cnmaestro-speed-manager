@@ -1,3 +1,5 @@
+import gc
+
 import pytest
 import ttkbootstrap as tb
 
@@ -9,6 +11,7 @@ def reset_ttkbootstrap_singleton() -> None:
     tb.Style.instance = None
     yield
     tb.Style.instance = None
+    gc.collect()
 
 
 
@@ -16,13 +19,13 @@ def test_dark_demo_shell_constructs_with_first_party_navigation() -> None:
     app = Application(demo=True)
     try:
         app.update_idletasks()
-        assert app.title() == "Operations Toolkit — 2.0.0-beta.1"
+        assert app.title() == "Operations Toolkit — 2.0.0-beta.2"
         assert app.style.theme.name == "darkly"
         assert app.module_titles == ("Overview", "Bulk Speed Changes", "Audit & Recovery")
         assert app.connection_button.instate(["disabled"])
         assert "DEMO" in app.connection_status.get()
     finally:
-        app.destroy()
+        app._shutdown()
 
 
 def test_window_shutdown_clears_active_session_credentials() -> None:
@@ -296,13 +299,10 @@ def test_session_registration_race_closes_provisional_adapter_on_failure(monkeyp
     app.context.session_gate.begin("publish")
     try:
         app.connect()
-        future = app._connection_future
-        assert future is not None
         deadline = time.monotonic() + 2
-        while not future.done() and time.monotonic() < deadline:
+        while app.connection_status.get() != "● Connection failed" and time.monotonic() < deadline:
+            app.update()
             time.sleep(0.01)
-        assert future.done()
-        app._watch_connection(future, instances[0])  # type: ignore[arg-type]
         assert app.connection_status.get() == "● Connection failed"
         assert events == ["close-called"]
         assert app.context.session_gate.connection is None
@@ -417,5 +417,38 @@ def test_bulk_view_close_closes_store_when_approval_cleanup_raises() -> None:
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
             _ = view.store.schema_version
         view.close()
+    finally:
+        app._shutdown()
+
+
+def test_live_ui_passes_narrow_cloud_suffix_policy_to_adapter(monkeypatch) -> None:
+    import asyncio
+
+    from operations_toolkit.ui import app as app_module
+
+    captured: dict[str, object] = {}
+
+    class CapturingAdapter:
+        def __init__(self, *_args, **kwargs) -> None:
+            captured.update(kwargs)
+
+        async def connect(self) -> str:
+            await asyncio.Future()
+            raise AssertionError("unreachable")
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(app_module, "LiveCnMaestroAdapter", CapturingAdapter)
+    app = Application(demo=False)
+    app.client_id.set("client")
+    app.client_secret.set("secret")
+    try:
+        app.connect()
+        assert captured["approved_redirect_hosts"] == {
+            "api.cambiumnetworks.com",
+            "cloud.cambiumnetworks.com",
+        }
+        assert captured["approved_redirect_suffixes"] == {"cloud.cambiumnetworks.com"}
     finally:
         app._shutdown()

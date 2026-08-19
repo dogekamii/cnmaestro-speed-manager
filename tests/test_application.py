@@ -9,7 +9,7 @@ from operations_toolkit.registry import first_party_modules
 
 
 def test_product_identity_and_small_static_module_contract(tmp_path: Path) -> None:
-    assert __version__ == "2.0.0-beta.1"
+    assert __version__ == "2.0.0-beta.2"
     modules = first_party_modules()
     assert len(modules) == 1
     provider = modules[0]
@@ -30,7 +30,7 @@ def test_smoke_test_initializes_database_and_config_without_gui_or_network(tmp_p
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
-    assert "Operations Toolkit 2.0.0-beta.1 smoke test: PASS" in result.stdout
+    assert "Operations Toolkit 2.0.0-beta.2 smoke test: PASS" in result.stdout
     assert "network=disabled" in result.stdout
     assert (tmp_path / "operations.db").exists()
     assert (tmp_path / "packages.json").exists()

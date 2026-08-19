@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version label (for example 2.0.0-beta.1)
+        description: Version label (for example 2.0.0-beta.2)
         required: true
 permissions:
   contents: read
