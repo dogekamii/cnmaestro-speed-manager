@@ -135,13 +135,113 @@ def test_https_and_redirect_host_policy() -> None:
         "https://api.cambiumnetworks.com",
         auth_url="https://cloud.cambiumnetworks.com",
         approved_hosts={"api.cambiumnetworks.com"},
+        approved_suffixes=set(),
     )
     with pytest.raises(ValueError, match="redirect host"):
         validate_redirect(
             "https://evil.example",
             auth_url="https://cloud.cambiumnetworks.com",
             approved_hosts=set(),
+            approved_suffixes=set(),
         )
+
+
+def test_regional_cnmaestro_redirect_under_approved_cloud_suffix_is_accepted() -> None:
+    redirect = "https://us-e1-s2-jwwsc39qdd.cloud.cambiumnetworks.com:443"
+
+    assert (
+        validate_redirect(
+            redirect,
+            auth_url="https://cloud.cambiumnetworks.com",
+            approved_hosts=set(),
+            approved_suffixes={"cloud.cambiumnetworks.com"},
+        )
+        == redirect
+    )
+
+
+@pytest.mark.parametrize(
+    ("redirect", "expected"),
+    [
+        ("https://CLOUD.CAMBIUMNETWORKS.COM", "https://cloud.cambiumnetworks.com"),
+        ("https://API.CAMBIUMNETWORKS.COM:443/", "https://api.cambiumnetworks.com:443"),
+        (
+            "https://REGION-1.CLOUD.CAMBIUMNETWORKS.COM:443/",
+            "https://region-1.cloud.cambiumnetworks.com:443",
+        ),
+    ],
+)
+def test_redirect_policy_accepts_and_normalizes_safe_base_urls(
+    redirect: str, expected: str
+) -> None:
+    assert (
+        validate_redirect(
+            redirect,
+            auth_url="https://cloud.cambiumnetworks.com",
+            approved_hosts={"api.cambiumnetworks.com"},
+            approved_suffixes={"cloud.cambiumnetworks.com"},
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("redirect", "reason"),
+    [
+        ("https://cambiumnetworks.com.evil.test", "outside the approved"),
+        ("https://cloud.cambiumnetworks.com.evil.test", "outside the approved"),
+        ("https://evilcloud.cambiumnetworks.com", "outside the approved"),
+        ("https://evilcambiumnetworks.com", "outside the approved"),
+        ("https://cloud.cambiumnetworks.com%2eevil.test", "ASCII DNS"),
+        (
+            "https://client:secret@region.cloud.cambiumnetworks.com",  # pragma: allowlist secret
+            "embedded credentials",
+        ),
+        ("http://region.cloud.cambiumnetworks.com", "HTTPS"),
+        ("https://region.cloud.cambiumnetworks.com:444", "omitted or 443"),
+        ("https://region.cloud.cambiumnetworks.com:not-a-port", "malformed port"),
+        ("https://region.cloud.cambiumnetworks.com:", "malformed port"),
+        ("https://region.cloud.cambiumnetworks.com:65536", "malformed port"),
+        ("https://region.cloud.cambiumnetworks.com/api/v2", "base URL"),
+        ("https://region.cloud.cambiumnetworks.com/?access_token=sensitive", "query or fragment"),
+        ("https://region.cloud.cambiumnetworks.com/#sensitive", "query or fragment"),
+        ("https://region.cloud.cambiumnetworks.com?", "query or fragment"),
+        ("https://region.cloud.cambiumnetworks.com#", "query or fragment"),
+        ("https://region.cloud.cambiumnetworks.com.", "trailing-dot"),
+        ("https://é.cloud.cambiumnetworks.com", "ASCII DNS"),
+        ("https://xn--9ca.cloud.cambiumnetworks.com", "IDNA"),
+    ],
+)
+def test_redirect_policy_rejects_unsafe_or_ambiguous_bases(redirect: str, reason: str) -> None:
+    with pytest.raises(ValueError, match=reason) as caught:
+        validate_redirect(
+            redirect,
+            auth_url="https://cloud.cambiumnetworks.com",
+            approved_hosts={"api.cambiumnetworks.com"},
+            approved_suffixes={"cloud.cambiumnetworks.com"},
+        )
+
+    message = str(caught.value)
+    assert "access_token" not in message
+    assert "sensitive" not in message
+    assert "client" not in message
+    assert "secret" not in message
+
+
+def test_redirect_rejection_names_only_the_hostname_and_policy_reason() -> None:
+    with pytest.raises(ValueError) as caught:
+        validate_redirect(
+            "https://user:password@outside.example/private-path?token=top-secret-query#private-fragment",  # pragma: allowlist secret
+            auth_url="https://cloud.cambiumnetworks.com",
+            approved_hosts=set(),
+            approved_suffixes={"cloud.cambiumnetworks.com"},
+        )
+
+    message = str(caught.value)
+    assert "outside.example" in message
+    assert "embedded credentials" in message
+    for secret_value in ("user", "password", "private-path", "top-secret-query", "private-fragment"):
+        assert secret_value not in message
 
 
 @pytest.mark.asyncio

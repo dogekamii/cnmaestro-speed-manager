@@ -147,6 +147,7 @@ class Application(tb.Window):
             self.client_id.get(),
             self.client_secret.get(),
             approved_redirect_hosts={"api.cambiumnetworks.com", "cloud.cambiumnetworks.com"},
+            approved_redirect_suffixes={"cloud.cambiumnetworks.com"},
         )
         self._connecting_adapter = adapter
         self.connection_button.configure(state=DISABLED)

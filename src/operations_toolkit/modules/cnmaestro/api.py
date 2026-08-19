@@ -181,10 +181,89 @@ def validate_endpoint(value: str, *, allow_localhost: bool = False) -> str:
     return value.rstrip("/")
 
 
-def validate_redirect(redirect: str, *, auth_url: str, approved_hosts: set[str]) -> str:
-    clean = validate_endpoint(redirect)
-    host = urlparse(clean).hostname
+_ASCII_DNS_HOST = re.compile(
+    r"(?=.{1,253}\Z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\Z"
+)
+
+
+def _redirect_rejected(host: str | None, reason: str) -> ValueError:
+    safe_host = ascii(host if host is not None else "<missing>")
+    return ValueError(f"token redirect host {safe_host} rejected: {reason}")
+
+
+def _normalize_dns_host(host: str, *, policy_name: str) -> str:
+    normalized = host.lower()
+    if normalized.endswith("."):
+        raise ValueError(f"{policy_name} host {host!a} has a trailing dot")
+    if not normalized.isascii() or not _ASCII_DNS_HOST.fullmatch(normalized):
+        raise ValueError(f"{policy_name} host {host!a} must use ASCII DNS labels")
+    if any(label.startswith("xn--") for label in normalized.split(".")):
+        raise ValueError(f"{policy_name} host {host!a} uses unsupported IDNA encoding")
+    return normalized
+
+
+def validate_redirect(
+    redirect: str,
+    *,
+    auth_url: str,
+    approved_hosts: set[str],
+    approved_suffixes: set[str],
+) -> str:
+    try:
+        parsed = urlparse(redirect)
+        host = parsed.hostname
+    except ValueError as exc:
+        raise _redirect_rejected(None, "URL authority is malformed") from exc
+
+    if parsed.username is not None or parsed.password is not None:
+        raise _redirect_rejected(host, "embedded credentials are not allowed")
+    if parsed.scheme.lower() != "https":
+        raise _redirect_rejected(host, "redirect must use HTTPS")
+    if host is None:
+        raise _redirect_rejected(host, "a hostname is required")
+    if host.endswith("."):
+        raise _redirect_rejected(host, "trailing-dot hostnames are not allowed")
+    if not host.isascii() or not _ASCII_DNS_HOST.fullmatch(host.lower()):
+        raise _redirect_rejected(host, "hostname must use unambiguous ASCII DNS labels")
+    normalized_host = host.lower()
+    if any(label.startswith("xn--") for label in normalized_host.split(".")):
+        raise _redirect_rejected(host, "IDNA-encoded hostnames are not supported")
+
+    authority = parsed.netloc.rsplit("@", 1)[-1]
+    if authority.count(":") > 1 or authority.endswith(":"):
+        raise _redirect_rejected(host, "redirect has a malformed port")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise _redirect_rejected(host, "redirect has a malformed port") from exc
+    if port not in {None, 443}:
+        raise _redirect_rejected(host, "port must be omitted or 443")
+    if "?" in redirect or "#" in redirect:
+        raise _redirect_rejected(host, "redirect must not include a query or fragment")
+    if parsed.path not in {"", "/"}:
+        raise _redirect_rejected(host, "redirect must be a base URL with an empty path or '/'")
+
     auth_host = urlparse(validate_endpoint(auth_url)).hostname
-    if host != auth_host and host not in approved_hosts:
-        raise ValueError("token redirect host is not approved")
-    return clean
+    assert auth_host is not None
+    normalized_auth_host = _normalize_dns_host(auth_host, policy_name="authentication endpoint")
+    normalized_approved_hosts = {
+        _normalize_dns_host(item, policy_name="approved redirect") for item in approved_hosts
+    }
+    normalized_suffixes = {
+        _normalize_dns_host(item, policy_name="approved redirect suffix")
+        for item in approved_suffixes
+    }
+    suffix_match = any(
+        normalized_host == suffix or normalized_host.endswith(f".{suffix}")
+        for suffix in normalized_suffixes
+    )
+    if (
+        normalized_host != normalized_auth_host
+        and normalized_host not in normalized_approved_hosts
+        and not suffix_match
+    ):
+        raise _redirect_rejected(host, "hostname is outside the approved redirect policy")
+
+    normalized_authority = normalized_host if port is None else f"{normalized_host}:443"
+    return f"https://{normalized_authority}"

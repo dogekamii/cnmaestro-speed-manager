@@ -140,6 +140,7 @@ class LiveCnMaestroAdapter:
         client_secret: str,
         *,
         approved_redirect_hosts: set[str],
+        approved_redirect_suffixes: set[str],
         client: httpx.AsyncClient | None = None,
         job_poll_attempts: int = 20,
         job_poll_interval: float = 1.0,
@@ -152,6 +153,7 @@ class LiveCnMaestroAdapter:
         self._client_id = client_id
         self._client_secret = client_secret
         self._approved_hosts = approved_redirect_hosts
+        self._approved_suffixes = approved_redirect_suffixes
         if job_poll_attempts < 1 or job_poll_interval < 0:
             raise ValueError("invalid job polling policy")
         self._job_poll_attempts = job_poll_attempts
@@ -164,6 +166,9 @@ class LiveCnMaestroAdapter:
         self._base_url: str | None = None
 
     async def connect(self) -> str:
+        self._client.headers.pop("Authorization", None)
+        self._token = None
+        self._base_url = None
         response = await self._client.post(
             f"{self._auth_url}/api/v2/access/token",
             auth=(self._client_id, self._client_secret),
@@ -171,12 +176,15 @@ class LiveCnMaestroAdapter:
         )
         response.raise_for_status()
         payload = response.json()
-        self._token = str(payload["access_token"])
-        self._base_url = validate_redirect(
+        token = str(payload["access_token"])
+        base_url = validate_redirect(
             str(payload.get("redirect_uri", self._auth_url)),
             auth_url=self._auth_url,
             approved_hosts=self._approved_hosts,
+            approved_suffixes=self._approved_suffixes,
         )
+        self._token = token
+        self._base_url = base_url
         self.connection_identity = hashlib.sha256(
             f"{self._auth_url}\0{self._base_url}\0{self._client_id}".encode()
         ).hexdigest()
