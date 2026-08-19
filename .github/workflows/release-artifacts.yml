@@ -21,7 +21,17 @@ jobs:
           VERSION_INPUT: ${{ inputs.version }}
         run: |
           python -c "from packaging.version import Version; import operations_toolkit; assert Version('$env:VERSION_INPUT') == Version(operations_toolkit.__version__), f'version input does not match runtime {operations_toolkit.__version__}'"
-      - run: python -m pytest
+      - run: python -m pytest --ignore=tests/test_ui.py
+      - name: Run Windows UI tests in isolated interpreters
+        shell: pwsh
+        run: |
+          $nodes = python -m pytest --collect-only -q tests/test_ui.py |
+            Where-Object { $_ -like "tests/test_ui.py::*" }
+          if ($nodes.Count -eq 0) { throw "No UI tests collected" }
+          foreach ($node in $nodes) {
+            python -m pytest -q $node
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - run: ruff check .
       - run: mypy src/operations_toolkit
       - run: pyinstaller --clean --noconfirm OperationsToolkit.spec
