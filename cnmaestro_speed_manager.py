@@ -4,10 +4,13 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk,messagebox
 import httpx,truststore
-APP_VERSION='1.2.1';APP_DIR=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent;UPDATE_CONFIG=APP_DIR/'update_config.json'
+APP_VERSION='1.2.2';APP_DIR=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent;UPDATE_CONFIG=APP_DIR/'update_config.json';DEFAULT_MANIFEST_URL='https://raw.githubusercontent.com/dogekamii/Operations-Toolkit/refs/heads/main/latest.json'
 PKGS={"6 Mbps":("6mbps Package",6451,2150),"10 Mbps":("10mbps Package",10752,1075),"15 Mbps":("15mbps Package",16128,3225),"20 Mbps":("20mbps Package",21500,10752),"25 Mbps":("25mbps Package",26880,3225),"50 Mbps":("50mbps Package",53760,10750),"75 Mbps":("75mbps Package",80640,10750),"100 Mbps":("100mbps Package",107520,21500)}
 OTHER='Other / Unmatched';PHRASE='APPLY SPEED CHANGES';CONCURRENCY=4;CACHE_HOURS=24
 DATA=Path(os.getenv('LOCALAPPDATA',Path.home()))/'cnMaestroSpeedManager';DATA.mkdir(exist_ok=True);DB=DATA/'speed_manager.db';SETTINGS=DATA/'settings.json'
+def resolve_manifest_url(config_path=UPDATE_CONFIG):
+ if config_path.exists():return json.loads(config_path.read_text(encoding='utf-8'))['manifest_url']
+ return DEFAULT_MANIFEST_URL
 def initdb():
  with sqlite3.connect(DB) as c:
   c.execute('CREATE TABLE IF NOT EXISTS cache(mac TEXT PRIMARY KEY,payload TEXT,scanned REAL)');c.execute('CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,timestamp TEXT,mac TEXT,name TEXT,old_package TEXT,target_package TEXT,template TEXT,job_id TEXT,job_state TEXT,verified_package TEXT,success INTEGER,detail TEXT)')
@@ -322,10 +325,7 @@ class App(tk.Tk):
   self.apply_theme()
  def vt(self,v):return tuple(int(x) for x in re.findall(r'\d+',str(v))[:4])
  def check_updates(self,auto=False):
-  if not UPDATE_CONFIG.exists():
-   if not auto:messagebox.showinfo('Updates not configured',f'Create update_config.json beside the app.\n{UPDATE_CONFIG}')
-   return
-  try:url=json.loads(UPDATE_CONFIG.read_text())['manifest_url'];url+=('&' if '?' in url else '?')+'t='+str(int(time.time()))
+  try:url=resolve_manifest_url();url+=('&' if '?' in url else '?')+'t='+str(int(time.time()))
   except Exception as e:return None if auto else messagebox.showerror('Update config error',str(e))
   def work():
    try:
