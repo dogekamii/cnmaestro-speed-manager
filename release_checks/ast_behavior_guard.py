@@ -9,12 +9,12 @@ CURRENT = ROOT / "cnmaestro_speed_manager.py"
 REFERENCE = ROOT / "release_checks" / "cnmaestro_speed_manager_v1.1.0.py"
 TOP_LEVEL_FUNCTIONS = ("initdb", "exactpkg", "nearest", "rates", "age", "save", "cached")
 CORE_APP_METHODS = (
-    "bg", "clear_cache", "clear_selection", "connect", "deselect_visible",
-    "displaypkg", "execute", "filt", "finish_all", "finish_one",
-    "finish_publish", "notice", "preview_rows", "progress_done",
-    "publish_status", "render", "row", "scan_all", "scan_one",
-    "select_visible", "setbusy", "show", "sort", "sortkey", "stream",
-    "suggestion", "tree_click", "vt",
+    "bg", "notice", "connect", "row", "setbusy", "scan_one", "finish_one",
+    "scan_all", "stream", "finish_all", "clear_cache", "suggestion",
+    "displaypkg", "filt", "sortkey", "sort", "tree_click", "select_visible",
+    "deselect_visible", "clear_selection", "show", "preview_rows",
+    "publish_status", "execute", "progress_done", "finish_publish", "audit",
+    "apply_theme", "load_settings", "vt", "check_updates", "update_result",
 )
 BEHAVIOR_CONSTANTS = ("PKGS", "OTHER", "PHRASE", "CONCURRENCY", "CACHE_HOURS")
 
