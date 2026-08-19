@@ -1,5 +1,3 @@
-import gc
-
 import pytest
 import ttkbootstrap as tb
 
@@ -9,10 +7,8 @@ from operations_toolkit.ui.app import Application
 @pytest.fixture(autouse=True)
 def reset_ttkbootstrap_singleton() -> None:
     tb.Style.instance = None
-    gc.collect()
     yield
     tb.Style.instance = None
-    gc.collect()
 
 
 
