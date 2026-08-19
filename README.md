@@ -1,8 +1,10 @@
-# Operations Toolkit 1.3.0
+# Operations Toolkit 1.3.1
 
-Operations Toolkit includes the working cnMaestro Speed Manager with compact service/tool navigation. Version 1.3.0 restores the dense v1.2.0-style workspace while keeping the current nested service navigation and cnMaestro behavior.
+Operations Toolkit includes the working cnMaestro Speed Manager with compact service/tool navigation. Version 1.3.1 retains the dense v1.2.0-style workspace while keeping the current nested service navigation and cnMaestro behavior.
 
-## What changed in 1.3.0
+## What changed in 1.3.1
+
+- The nested navigation labels now use the larger 11-point v1.2.0 typography.
 
 - Restored the dense dark-navy v1.2.0-style Speed Manager workspace with compact auth, scan, filter, table, and publish sections.
 - Kept the nested Overview > cnMaestro > Speed Manager navigation; Activity is renamed Audit Log.
@@ -36,10 +38,10 @@ To override the manifest URL, place a valid `update_config.json` beside the exec
 Run `build_windows.bat`, or use the equivalent command after installing `requirements.txt`:
 
 ```powershell
-pyinstaller --noconfirm --clean --onefile --windowed --name "Operations-Toolkit-v1.3.0" cnmaestro_speed_manager.py
+pyinstaller --noconfirm --clean --onefile --windowed --name "Operations-Toolkit-v1.3.1" cnmaestro_speed_manager.py
 ```
 
-The executable is written to `dist\Operations-Toolkit-v1.3.0.exe`.
+The executable is written to `dist\Operations-Toolkit-v1.3.1.exe`.
 
 ## Regression guard
 
