@@ -1,17 +1,13 @@
-# Operations Toolkit 1.3.2
+# Operations Toolkit 1.4.0
 
-Operations Toolkit includes the working cnMaestro Speed Manager with compact service/tool navigation. Version 1.3.2 retains the dense v1.2.0-style workspace while keeping the current nested service navigation and cnMaestro behavior.
+Operations Toolkit includes the working cnMaestro Speed Manager with compact service/tool navigation. Version 1.4.0 retains the dense v1.2.0-style workspace while keeping the current nested service navigation and cnMaestro behavior.
 
-## What changed in 1.3.2
+## What changed in 1.4.0
 
-- The sidebar is slightly wider and the nested Speed Manager label now fits without clipping.
-
-- The nested navigation labels now use the larger 11-point v1.2.0 typography.
-
-- Restored the dense dark-navy v1.2.0-style Speed Manager workspace with compact auth, scan, filter, table, and publish sections.
-- Kept the nested Overview > cnMaestro > Speed Manager navigation; Activity is renamed Audit Log.
-- Scan & Filters, Preview & Publish, and Audit Log are in-app views, with the existing audit CSV export retained.
-- Other dialogs and the cnMaestro API, TLS, scan/filter/selection, preview/publish, audit, cache, updater, latest-manifest, and package behavior are unchanged.
+- Added an opt-in **Remember credentials** checkbox to the compact cnMaestro authentication area.
+- Remembered Client Secrets are stored per Windows user in Windows Credential Manager; they are never written to the settings file. The Client ID and remember state are stored in `%LOCALAPPDATA%\cnMaestroSpeedManager\settings.json` only after successful authentication.
+- Remembered credentials fill the masked fields at startup but never auto-connect. Use **Settings > Forget saved credentials** to remove the saved secret and clear the remembered Client ID/state.
+- Retained the dense v1.2.0-style workspace, nested cnMaestro > Speed Manager navigation, updater, safety controls, and existing cnMaestro endpoint and operational behavior.
 
 Older releases remain available in GitHub release history.
 
@@ -27,7 +23,7 @@ Older releases remain available in GitHub release history.
 
 On Windows, run **Launch Operations Toolkit.bat**. Expand **cnMaestro** and select **Speed Manager**. Keep write actions disabled during validation.
 
-The pinned dependencies are listed in `requirements.txt`.
+The pinned dependencies are listed in `requirements.txt`; `keyring` uses the current Windows user's Credential Manager on Windows.
 
 ## Update checks
 
@@ -40,14 +36,14 @@ To override the manifest URL, place a valid `update_config.json` beside the exec
 Run `build_windows.bat`, or use the equivalent command after installing `requirements.txt`:
 
 ```powershell
-pyinstaller --noconfirm --clean --onefile --windowed --name "Operations-Toolkit-v1.3.2" cnmaestro_speed_manager.py
+pyinstaller --noconfirm --clean --onefile --windowed --hidden-import keyring.backends.Windows --name "Operations-Toolkit-v1.4.0" cnmaestro_speed_manager.py
 ```
 
-The executable is written to `dist\Operations-Toolkit-v1.3.2.exe`.
+The executable is written to `dist\Operations-Toolkit-v1.4.0.exe`.
 
 ## Regression guard
 
-`release_checks/ast_behavior_guard.py` compares the API class and nonvisual operational methods with the original v1.1.0 source by AST. The intentionally changed updater resolver/check path and in-app visual navigation are covered by focused tests. CI also checks Python syntax/import, builds the Windows one-file/windowed executable, and launches and closes the GUI briefly with preview mode enabled and without making cnMaestro calls.
+`release_checks/ast_behavior_guard.py` compares the API class and nonvisual operational methods with the original v1.1.0 source by AST. The intentionally changed updater resolver/check path, credential/settings methods, and in-app visual navigation are covered by focused tests. CI also checks Python syntax/import, builds the Windows one-file/windowed executable, and launches and closes the GUI briefly with preview mode enabled and without making cnMaestro calls.
 
 ## Approved interface
 

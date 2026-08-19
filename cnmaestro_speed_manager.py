@@ -3,11 +3,44 @@ from datetime import datetime,timezone
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk,messagebox,filedialog
-import httpx,truststore
-APP_VERSION='1.3.2';APP_DIR=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent;UPDATE_CONFIG=APP_DIR/'update_config.json';DEFAULT_MANIFEST_URL='https://raw.githubusercontent.com/dogekamii/Operations-Toolkit/refs/heads/main/latest.json'
+import httpx,truststore,keyring
+from keyring.errors import PasswordDeleteError
+APP_VERSION='1.4.0';APP_DIR=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent;UPDATE_CONFIG=APP_DIR/'update_config.json';DEFAULT_MANIFEST_URL='https://raw.githubusercontent.com/dogekamii/Operations-Toolkit/refs/heads/main/latest.json'
 PKGS={"6 Mbps":("6mbps Package",6451,2150),"10 Mbps":("10mbps Package",10752,1075),"15 Mbps":("15mbps Package",16128,3225),"20 Mbps":("20mbps Package",21500,10752),"25 Mbps":("25mbps Package",26880,3225),"50 Mbps":("50mbps Package",53760,10750),"75 Mbps":("75mbps Package",80640,10750),"100 Mbps":("100mbps Package",107520,21500)}
 OTHER='Other / Unmatched';PHRASE='APPLY SPEED CHANGES';CONCURRENCY=4;CACHE_HOURS=24
 DATA=Path(os.getenv('LOCALAPPDATA',Path.home()))/'cnMaestroSpeedManager';DATA.mkdir(exist_ok=True);DB=DATA/'speed_manager.db';SETTINGS=DATA/'settings.json'
+CREDENTIAL_SERVICE='Operations Toolkit/cnMaestro';SETTINGS_KEYS=('theme','remember_credentials','client_id')
+def load_settings_dict(path=SETTINGS):
+ try:
+  data=json.loads(path.read_text(encoding='utf-8'));return data if isinstance(data,dict) else {}
+ except (OSError,json.JSONDecodeError):return {}
+def load_saved_credentials(path=SETTINGS,keyring_backend=keyring):
+ settings=load_settings_dict(path)
+ if not settings.get('remember_credentials'):return False,'',''
+ client_id=str(settings.get('client_id') or '')
+ if not client_id:return False,'',''
+ return True,client_id,keyring_backend.get_password(CREDENTIAL_SERVICE,client_id) or ''
+def write_settings_dict(settings,path=SETTINGS):
+ safe={key:settings[key] for key in SETTINGS_KEYS if key in settings};path.parent.mkdir(parents=True,exist_ok=True);temporary=path.with_suffix(path.suffix+'.tmp');temporary.write_text(json.dumps(safe,indent=2),encoding='utf-8');temporary.replace(path)
+def merge_settings(updates,path=SETTINGS):
+ settings=load_settings_dict(path);settings.update(updates);write_settings_dict(settings,path);return settings
+def save_credentials(client_id,secret,path=SETTINGS,keyring_backend=keyring):
+ try:keyring_backend.set_password(CREDENTIAL_SERVICE,client_id,secret)
+ except Exception:return False
+ try:merge_settings({'remember_credentials':True,'client_id':client_id},path);return True
+ except Exception:
+  try:keyring_backend.delete_password(CREDENTIAL_SERVICE,client_id)
+  except Exception:pass
+  return False
+def forget_credentials(path=SETTINGS,keyring_backend=keyring):
+ settings=load_settings_dict(path);client_id=str(settings.get('client_id') or '')
+ if client_id:
+  try:keyring_backend.delete_password(CREDENTIAL_SERVICE,client_id)
+  except PasswordDeleteError:pass
+  except Exception:return False
+ settings.pop('remember_credentials',None);settings.pop('client_id',None)
+ try:write_settings_dict(settings,path);return True
+ except OSError:return False
 def resolve_manifest_url(config_path=UPDATE_CONFIG):
  if config_path.exists():return json.loads(config_path.read_text(encoding='utf-8'))['manifest_url']
  return DEFAULT_MANIFEST_URL
@@ -92,7 +125,7 @@ class API:
   finally:await c.aclose()
 class App(tk.Tk):
  def __init__(self):
-  super().__init__();initdb();self.title('Operations Toolkit');self.geometry('1280x720');self.minsize(1120,680);self.api=None;self.rows=cached();self.preview=[];self.checked=set();self.cancel=threading.Event();self.scanning=False;self.sort_col='name';self.sort_rev=False;self.job_status={};self.style=ttk.Style();self.ui()
+  super().__init__();initdb();self.settings_path=SETTINGS;self.credential_backend=keyring;self.title('Operations Toolkit');self.geometry('1280x720');self.minsize(1120,680);self.api=None;self.rows=cached();self.preview=[];self.checked=set();self.cancel=threading.Event();self.scanning=False;self.sort_col='name';self.sort_rev=False;self.job_status={};self.style=ttk.Style();self.ui()
   if os.getenv('OPERATIONS_TOOLKIT_PREVIEW'):self.configure_styles()
   else:self.load_settings();self.configure_styles() if self.theme.get()=='Dark' else None
   self.render();self.show_page('speed_manager')
@@ -126,7 +159,7 @@ class App(tk.Tk):
   self.pages={}
   for key in ('overview','speed_manager','audit','settings'):
    page=ttk.Frame(self.content,padding=(15,12));page.grid(row=0,column=0,sticky='nsew');self.pages[key]=page
-  self.auth=tk.StringVar(value='https://cloud.cambiumnetworks.com');self.cid=tk.StringVar();self.sec=tk.StringVar();self.status=tk.StringVar(value='Disconnected');self.theme=tk.StringVar(value='Dark')
+  self.auth=tk.StringVar(value='https://cloud.cambiumnetworks.com');self.cid=tk.StringVar();self.sec=tk.StringVar();self.remember_credentials=tk.BooleanVar(value=False);self.status=tk.StringVar(value='Disconnected');self.theme=tk.StringVar(value='Dark')
   self.build_speed_manager();self.build_overview();self.build_audit_page();self.build_settings()
  def add_nav_row(self,key,label,icon,parent=None,indent=0):
   c=self.colors;holder=parent or self.nav_container;row=tk.Frame(holder,bg=c['sidebar'],height=35,cursor='hand2');row.pack(fill='x',padx=(5+indent,7),pady=1);row.pack_propagate(False)
@@ -158,7 +191,7 @@ class App(tk.Tk):
   hdr=ttk.Frame(p);hdr.grid(row=0,column=0,sticky='ew',pady=(0,6));hdr.columnconfigure(0,weight=1);ttk.Label(hdr,text='cnMaestro Speed Manager',style='PageTitle.TLabel').grid(row=0,column=0,sticky='w');ttk.Label(hdr,text='Bulk package operations',style='Muted.TLabel').grid(row=1,column=0,sticky='w');tk.Label(hdr,text='  Available  ',font=('Segoe UI Semibold',8),fg='#092019',bg=self.colors['success'],padx=4,pady=2).grid(row=0,column=1,rowspan=2,sticky='e')
   o,f=self.card(p,10,6);o.grid(row=1,column=0,sticky='ew',pady=(0,5));f.columnconfigure(0,weight=3,minsize=240);f.columnconfigure(1,weight=2,minsize=160);f.columnconfigure(2,weight=2,minsize=160)
   for col,(label,var,show) in enumerate([('Auth URL',self.auth,''),('Client ID',self.cid,''),('Client secret',self.sec,'*')]):ttk.Label(f,text=label,style='SurfaceMuted.TLabel').grid(row=0,column=col,sticky='w',padx=(0,7));ttk.Entry(f,textvariable=var,show=show).grid(row=1,column=col,sticky='ew',padx=(0,7))
-  ttk.Button(f,text='Connect',style='Accent.TButton',command=self.connect).grid(row=1,column=3,sticky='e');ttk.Label(f,textvariable=self.status,style='SurfaceMuted.TLabel').grid(row=2,column=0,columnspan=4,sticky='w',pady=(4,0))
+  ttk.Button(f,text='Connect',style='Accent.TButton',command=self.connect).grid(row=1,column=3,sticky='e');ttk.Label(f,textvariable=self.status,style='SurfaceMuted.TLabel').grid(row=2,column=0,columnspan=2,sticky='w',pady=(4,0));self.remember_check=ttk.Checkbutton(f,text='Remember credentials',variable=self.remember_credentials);self.remember_check.grid(row=2,column=2,columnspan=2,sticky='e',pady=(4,0))
   self.controls=ttk.Frame(p);self.controls.grid(row=2,column=0,sticky='ew');self.controls.columnconfigure(0,weight=1)
   o,a=self.card(self.controls,10,6);o.grid(row=0,column=0,sticky='ew',pady=(0,5));self.mac=tk.StringVar(value='0A:00:3E:80:42:EC');self.force=tk.BooleanVar(value=False);self.days=tk.StringVar(value='10');self.approx=tk.BooleanVar(value=False);self.tolerance=tk.StringVar(value='10');self.onlysel=tk.BooleanVar(value=False);self.seltext=tk.StringVar(value='0 selected')
   ttk.Label(a,text='Scan one MAC',style='SurfaceMuted.TLabel').grid(row=0,column=0,sticky='w');ttk.Entry(a,textvariable=self.mac,width=20).grid(row=0,column=1,padx=(5,6));self.one=ttk.Button(a,text='Scan one',command=self.scan_one);self.one.grid(row=0,column=2);self.all=ttk.Button(a,text='Scan all SMs',command=self.scan_all);self.all.grid(row=0,column=3,padx=5);self.cancelb=ttk.Button(a,text='Cancel',command=lambda:self.cancel.set(),state='disabled');self.cancelb.grid(row=0,column=4);self.clearb=ttk.Button(a,text='Clear cache',command=self.clear_cache);self.clearb.grid(row=0,column=5,padx=(5,0))
@@ -194,14 +227,21 @@ class App(tk.Tk):
  def build_settings(self):
   p=self.pages['settings'];ttk.Label(p,text='Settings',style='PageTitle.TLabel').grid(row=0,column=0,sticky='w');ttk.Label(p,text='Application appearance, paths, and updates',style='Muted.TLabel').grid(row=1,column=0,sticky='w',pady=(3,15));o,b=self.card(p,14,12);o.grid(row=2,column=0,sticky='ew');ttk.Label(b,text='Application',style='CardTitle.TLabel').grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,8));ttk.Label(b,text='Appearance',style='SurfaceMuted.TLabel').grid(row=1,column=0,sticky='w',pady=4);tb=ttk.Combobox(b,textvariable=self.theme,values=['System','Light','Dark'],state='readonly',width=12);tb.grid(row=1,column=1,sticky='w',padx=(18,0));tb.bind('<<ComboboxSelected>>',lambda e:self.apply_theme())
   for i,(label,value) in enumerate([('Data directory',str(DATA)),('Audit database',str(DB)),('Update manifest',str(UPDATE_CONFIG))],2):ttk.Label(b,text=label,style='SurfaceMuted.TLabel').grid(row=i,column=0,sticky='nw',pady=4);ttk.Label(b,text=value,style='Surface.TLabel',wraplength=700).grid(row=i,column=1,sticky='w',padx=(18,0),pady=4)
-  ttk.Button(b,text='Check for updates',command=lambda:self.check_updates(False)).grid(row=5,column=0,sticky='w',pady=(12,0))
+  ttk.Button(b,text='Check for updates',command=lambda:self.check_updates(False)).grid(row=5,column=0,sticky='w',pady=(12,0));ttk.Button(b,text='Forget saved credentials',command=self.forget_saved_credentials).grid(row=5,column=1,sticky='w',padx=(18,0),pady=(12,0))
  def bg(self,coro,done):
   def run():
    try:r=asyncio.run(coro);self.after(0,lambda r=r:done(r,None))
    except Exception as e:self.after(0,lambda e=e:done(None,e))
   threading.Thread(target=run,daemon=True).start()
  def notice(self,t):self.after(0,lambda:self.status.set(t))
- def connect(self):self.api=API(self.auth.get(),self.cid.get(),self.sec.get(),self.notice);self.status.set('Connecting...');self.bg(self.api.authonly(),lambda r,e:self.status.set('Error: '+str(e) if e else 'Connected: '+r))
+ def connect(self):self.api=API(self.auth.get(),self.cid.get(),self.sec.get(),self.notice);self.status.set('Connecting...');self.bg(self.api.authonly(),self.finish_connect)
+ def finish_connect(self,result,error):
+  if error:self.status.set('Error: connection failed');return
+  self.status.set('Connected: '+result)
+  if self.remember_credentials.get() and not save_credentials(self.cid.get(),self.sec.get(),self.settings_path,self.credential_backend):self.status.set('Connected; credentials not saved')
+ def forget_saved_credentials(self):
+  if not forget_credentials(self.settings_path,self.credential_backend):self.status.set('Saved credentials could not be removed');return
+  self.cid.set('');self.sec.set('');self.remember_credentials.set(False);self.status.set('Saved credentials forgotten')
  def row(self,d,dl=None,ul=None,err=''):return {'name':d.get('name'),'mac':d.get('mac'),'package':exactpkg(dl,ul) if dl is not None else OTHER,'network':d.get('network'),'tower':d.get('tower'),'ap_mac':d.get('ap_mac'),'online':d.get('online'),'status_time':d.get('status_time'),'downlink':dl,'uplink':ul,'error':err,'cache_age_hours':0,'stale':False}
  def setbusy(self,x):self.scanning=x;st='disabled' if x else 'normal';self.one.config(state=st);self.all.config(state=st);self.clearb.config(state=st);self.w.config(state=st);self.pub.config(state=st);self.cancelb.config(state='normal' if x else 'disabled')
  def scan_one(self):
@@ -327,11 +367,13 @@ class App(tk.Tk):
   with open(path,'w',newline='',encoding='utf-8-sig') as f:w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
   messagebox.showinfo('Audit log exported',f'{len(rows)} records exported to:\n{path}')
  def apply_theme(self):
-  mode=self.theme.get();dark=mode=='Dark';bg='#1e1e1e' if dark else '#f3f3f3';fg='#f0f0f0' if dark else '#111111';field='#2b2b2b' if dark else '#ffffff';accent='#3a3a3a' if dark else '#e7e7e7';self.configure(bg=bg);self.style.theme_use('clam');self.style.configure('.',background=bg,foreground=fg,fieldbackground=field);self.style.configure('Treeview',background=field,foreground=fg,fieldbackground=field,rowheight=24);self.style.configure('Treeview.Heading',background=accent,foreground=fg);self.style.map('Treeview',background=[('selected','#225a8f' if dark else '#cce5ff')],foreground=[('selected','#ffffff' if dark else '#000000')]);self.style.configure('TEntry',fieldbackground=field);self.style.configure('TCombobox',fieldbackground=field);self.out.configure(bg=field,fg=fg,insertbackground=fg);SETTINGS.write_text(json.dumps({'theme':mode}));self.render()
+  mode=self.theme.get();dark=mode=='Dark';bg='#1e1e1e' if dark else '#f3f3f3';fg='#f0f0f0' if dark else '#111111';field='#2b2b2b' if dark else '#ffffff';accent='#3a3a3a' if dark else '#e7e7e7';self.configure(bg=bg);self.style.theme_use('clam');self.style.configure('.',background=bg,foreground=fg,fieldbackground=field);self.style.configure('Treeview',background=field,foreground=fg,fieldbackground=field,rowheight=24);self.style.configure('Treeview.Heading',background=accent,foreground=fg);self.style.map('Treeview',background=[('selected','#225a8f' if dark else '#cce5ff')],foreground=[('selected','#ffffff' if dark else '#000000')]);self.style.configure('TEntry',fieldbackground=field);self.style.configure('TCombobox',fieldbackground=field);self.out.configure(bg=field,fg=fg,insertbackground=fg);merge_settings({'theme':mode},self.settings_path);self.render()
  def load_settings(self):
-  try:self.theme.set(json.loads(SETTINGS.read_text()).get('theme','System'))
-  except:pass
-  self.apply_theme()
+  settings=load_settings_dict(self.settings_path);self.theme.set(settings.get('theme','System'))
+  try:remembered,client_id,secret=load_saved_credentials(self.settings_path,self.credential_backend)
+  except Exception:
+   remembered=bool(settings.get('remember_credentials') and settings.get('client_id'));client_id=str(settings.get('client_id') or '') if remembered else '';secret='';self.status.set('Saved credential unavailable')
+  self.remember_credentials.set(remembered);self.cid.set(client_id);self.sec.set(secret);self.apply_theme()
  def vt(self,v):return tuple(int(x) for x in re.findall(r'\d+',str(v))[:4])
  def check_updates(self,auto=False):
   try:url=resolve_manifest_url();url+=('&' if '?' in url else '?')+'t='+str(int(time.time()))
