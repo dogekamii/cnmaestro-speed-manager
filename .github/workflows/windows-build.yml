@@ -44,22 +44,28 @@ jobs:
           $env:OPERATIONS_TOOLKIT_PREVIEW = '1'
           $env:OPERATIONS_TOOLKIT_SMOKE_NAV = '1'
           $exe = Resolve-Path '.\dist\Operations-Toolkit-v1.3.0.exe'
-          $process = Start-Process -FilePath $exe -PassThru
+          $launcher = Start-Process -FilePath $exe -PassThru
           $deadline = (Get-Date).AddSeconds(12)
+          $windowProcess = $null
           do {
             Start-Sleep -Milliseconds 500
-            $process.Refresh()
-            if ($process.HasExited) {
-              throw "GUI exited immediately with code $($process.ExitCode)"
+            if ($launcher.HasExited) {
+              throw "GUI exited immediately with code $($launcher.ExitCode)"
             }
-          } while ($process.MainWindowTitle -ne 'Operations Toolkit - inline views smoke complete' -and (Get-Date) -lt $deadline)
-          if ($process.MainWindowTitle -ne 'Operations Toolkit - inline views smoke complete') {
-            throw "Inline view navigation smoke did not complete. Last title: $($process.MainWindowTitle)"
+            $windowProcess = Get-Process | Where-Object {
+              $_.MainWindowTitle -eq 'Operations Toolkit - inline views smoke complete'
+            } | Select-Object -First 1
+          } while (-not $windowProcess -and (Get-Date) -lt $deadline)
+          if (-not $windowProcess) {
+            throw 'Inline view navigation smoke did not expose the completion window.'
           }
-          $null = $process.CloseMainWindow()
-          if (-not $process.WaitForExit(5000)) {
-            Stop-Process -Id $process.Id
-            Wait-Process -Id $process.Id -ErrorAction SilentlyContinue
+          $null = $windowProcess.CloseMainWindow()
+          if (-not $windowProcess.WaitForExit(5000)) {
+            Stop-Process -Id $windowProcess.Id
+            Wait-Process -Id $windowProcess.Id -ErrorAction SilentlyContinue
+          }
+          if (-not $launcher.HasExited) {
+            $launcher.WaitForExit(5000) | Out-Null
           }
           Write-Host 'GUI opened and returned from both inline action views, remained alive, and was closed cleanly.'
       - name: Generate SHA256SUMS
