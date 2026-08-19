@@ -1,4 +1,4 @@
-"""Verify the v1.3 visual source preserves the original v1.1 behavior AST."""
+"""Verify the v1.4 source preserves the original v1.1 behavior AST."""
 from __future__ import annotations
 
 import ast
@@ -9,7 +9,7 @@ CURRENT = ROOT / "cnmaestro_speed_manager.py"
 REFERENCE = ROOT / "release_checks" / "cnmaestro_speed_manager_v1.1.0.py"
 TOP_LEVEL_FUNCTIONS = ("initdb", "exactpkg", "nearest", "rates", "age", "save", "cached")
 CORE_APP_METHODS = (
-    "bg", "notice", "connect", "row", "setbusy", "scan_one", "finish_one",
+    "bg", "notice", "row", "setbusy", "scan_one", "finish_one",
     "scan_all", "stream", "finish_all", "clear_cache", "suggestion",
     "displaypkg", "filt", "sortkey", "sort", "tree_click", "select_visible",
     "deselect_visible", "clear_selection", "show", "preview_rows",
@@ -17,7 +17,9 @@ CORE_APP_METHODS = (
     # App.audit now performs visual in-app navigation; its unchanged query/table data
     # behavior is covered by tests/test_inline_tool_views.py.
     # check_updates intentionally differs and is covered by tests/test_updater.py.
-    "apply_theme", "load_settings", "vt", "update_result",
+    # connect and credential/settings methods intentionally differ for v1.4.0 and
+    # are covered by tests/test_credentials.py.
+    "vt", "update_result",
 )
 BEHAVIOR_CONSTANTS = ("PKGS", "OTHER", "PHRASE", "CONCURRENCY", "CACHE_HOURS")
 
