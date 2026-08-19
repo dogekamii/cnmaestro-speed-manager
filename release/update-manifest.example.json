@@ -1,0 +1,6 @@
+{
+  "version": "2.0.0-beta.1",
+  "download_url": "https://github.com/dogekamii/cnmaestro-speed-manager/releases/download/v2.0.0-beta.1/OperationsToolkit.exe",
+  "sha256": "REPLACE_WITH_SHA256SUMS_VALUE",
+  "notes": "Unsigned beta; review release notes and verify SHA-256 before opening."
+}
