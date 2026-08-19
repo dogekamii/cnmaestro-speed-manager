@@ -1,5 +1,5 @@
 {
-  "version": "1.2.2",
-  "download_url": "https://github.com/dogekamii/Operations-Toolkit/releases/download/v1.2.2/Operations-Toolkit-v1.2.2.exe",
-  "notes": "Restores packaged update checks without requiring an update_config.json sidecar."
+  "version": "1.3.0",
+  "download_url": "https://github.com/dogekamii/Operations-Toolkit/releases/download/v1.3.0/Operations-Toolkit-v1.3.0.exe",
+  "notes": "Restores the dense v1.2.0-style workspace with nested navigation and in-app Scan & Filters, Preview & Publish, and Audit Log views."
 }
