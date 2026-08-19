@@ -210,6 +210,11 @@ def validate_redirect(
     approved_hosts: set[str],
     approved_suffixes: set[str],
 ) -> str:
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in redirect):
+        raise _redirect_rejected(None, "URL contains an ASCII control character")
+    if redirect != redirect.strip():
+        raise _redirect_rejected(None, "URL has leading or trailing whitespace")
+
     try:
         parsed = urlparse(redirect)
         host = parsed.hostname
