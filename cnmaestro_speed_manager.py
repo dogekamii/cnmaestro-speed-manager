@@ -24,23 +24,35 @@ def write_settings_dict(settings,path=SETTINGS):
  safe={key:settings[key] for key in SETTINGS_KEYS if key in settings};path.parent.mkdir(parents=True,exist_ok=True);temporary=path.with_suffix(path.suffix+'.tmp');temporary.write_text(json.dumps(safe,indent=2),encoding='utf-8');temporary.replace(path)
 def merge_settings(updates,path=SETTINGS):
  settings=load_settings_dict(path);settings.update(updates);write_settings_dict(settings,path);return settings
-def save_credentials(client_id,secret,path=SETTINGS,keyring_backend=keyring):
+def save_credentials(client_id,secret,path=SETTINGS,keyring_backend=keyring,cleanup_warnings=None):
+ settings=load_settings_dict(path);previous_client_id=str(settings.get('client_id') or '')
  try:keyring_backend.set_password(CREDENTIAL_SERVICE,client_id,secret)
  except Exception:return False
- try:merge_settings({'remember_credentials':True,'client_id':client_id},path);return True
+ cleanup_failed=False
+ if previous_client_id and previous_client_id!=client_id:
+  try:keyring_backend.delete_password(CREDENTIAL_SERVICE,previous_client_id)
+  except PasswordDeleteError:pass
+  except Exception:cleanup_failed=True
+ try:merge_settings({'remember_credentials':True,'client_id':client_id},path)
  except Exception:
   try:keyring_backend.delete_password(CREDENTIAL_SERVICE,client_id)
   except Exception:pass
   return False
-def forget_credentials(path=SETTINGS,keyring_backend=keyring):
- settings=load_settings_dict(path);client_id=str(settings.get('client_id') or '')
- if client_id:
+ if cleanup_failed and cleanup_warnings is not None:cleanup_warnings.append('stale credential cleanup failed')
+ return True
+def forget_credentials(path=SETTINGS,keyring_backend=keyring,additional_client_ids=()):
+ settings=load_settings_dict(path);client_ids=[]
+ for client_id in (str(settings.get('client_id') or ''),*additional_client_ids):
+  if client_id and client_id not in client_ids:client_ids.append(client_id)
+ cleanup_failed=False
+ for client_id in client_ids:
   try:keyring_backend.delete_password(CREDENTIAL_SERVICE,client_id)
   except PasswordDeleteError:pass
-  except Exception:return False
+  except Exception:cleanup_failed=True
  settings.pop('remember_credentials',None);settings.pop('client_id',None)
- try:write_settings_dict(settings,path);return True
+ try:write_settings_dict(settings,path)
  except OSError:return False
+ return not cleanup_failed
 def resolve_manifest_url(config_path=UPDATE_CONFIG):
  if config_path.exists():return json.loads(config_path.read_text(encoding='utf-8'))['manifest_url']
  return DEFAULT_MANIFEST_URL
@@ -159,7 +171,7 @@ class App(tk.Tk):
   self.pages={}
   for key in ('overview','speed_manager','audit','settings'):
    page=ttk.Frame(self.content,padding=(15,12));page.grid(row=0,column=0,sticky='nsew');self.pages[key]=page
-  self.auth=tk.StringVar(value='https://cloud.cambiumnetworks.com');self.cid=tk.StringVar();self.sec=tk.StringVar();self.remember_credentials=tk.BooleanVar(value=False);self.status=tk.StringVar(value='Disconnected');self.theme=tk.StringVar(value='Dark')
+  self.auth=tk.StringVar(value='https://cloud.cambiumnetworks.com');self.cid=tk.StringVar();self.sec=tk.StringVar();self.remember_credentials=tk.BooleanVar(value=False);self.status=tk.StringVar(value='Disconnected');self.theme=tk.StringVar(value='Dark');self._loading_credentials=False;self.secret_client_id=None;self.loaded_secret_client_id=None;self.cid.trace_add('write',self.on_client_id_changed);self.sec.trace_add('write',self.on_client_secret_changed)
   self.build_speed_manager();self.build_overview();self.build_audit_page();self.build_settings()
  def add_nav_row(self,key,label,icon,parent=None,indent=0):
   c=self.colors;holder=parent or self.nav_container;row=tk.Frame(holder,bg=c['sidebar'],height=35,cursor='hand2');row.pack(fill='x',padx=(5+indent,7),pady=1);row.pack_propagate(False)
@@ -234,14 +246,23 @@ class App(tk.Tk):
    except Exception as e:self.after(0,lambda e=e:done(None,e))
   threading.Thread(target=run,daemon=True).start()
  def notice(self,t):self.after(0,lambda:self.status.set(t))
- def connect(self):self.api=API(self.auth.get(),self.cid.get(),self.sec.get(),self.notice);self.status.set('Connecting...');self.bg(self.api.authonly(),self.finish_connect)
- def finish_connect(self,result,error):
+ def on_client_id_changed(self,*_):
+  if self._loading_credentials:return
+  if self.sec.get() and self.secret_client_id!=self.cid.get():self.sec.set('')
+ def on_client_secret_changed(self,*_):
+  if self._loading_credentials:return
+  self.secret_client_id=self.cid.get() if self.sec.get() else None
+ def connect(self):
+  attempt=(self.auth.get(),self.cid.get(),self.sec.get(),bool(self.remember_credentials.get()));self.api=API(attempt[0],attempt[1],attempt[2],self.notice);self.status.set('Connecting...');self.bg(self.api.authonly(),lambda result,error,attempt=attempt:self.finish_connect(result,error,attempt))
+ def finish_connect(self,result,error,attempt):
   if error:self.status.set('Error: connection failed');return
   self.status.set('Connected: '+result)
-  if self.remember_credentials.get() and not save_credentials(self.cid.get(),self.sec.get(),self.settings_path,self.credential_backend):self.status.set('Connected; credentials not saved')
+  if attempt[3]:
+   warnings=[]
+   if not save_credentials(attempt[1],attempt[2],self.settings_path,self.credential_backend,warnings):self.status.set('Connected; credentials not saved')
+   elif warnings:self.status.set('Connected; '+warnings[0])
  def forget_saved_credentials(self):
-  if not forget_credentials(self.settings_path,self.credential_backend):self.status.set('Saved credentials could not be removed');return
-  self.cid.set('');self.sec.set('');self.remember_credentials.set(False);self.status.set('Saved credentials forgotten')
+  forgotten=forget_credentials(self.settings_path,self.credential_backend,(self.__dict__.get('loaded_secret_client_id'),));self.cid.set('');self.sec.set('');self.remember_credentials.set(False);self.secret_client_id=None;self.loaded_secret_client_id=None;self.status.set('Saved credentials forgotten' if forgotten else 'Credentials cleared; stale credential cleanup failed')
  def row(self,d,dl=None,ul=None,err=''):return {'name':d.get('name'),'mac':d.get('mac'),'package':exactpkg(dl,ul) if dl is not None else OTHER,'network':d.get('network'),'tower':d.get('tower'),'ap_mac':d.get('ap_mac'),'online':d.get('online'),'status_time':d.get('status_time'),'downlink':dl,'uplink':ul,'error':err,'cache_age_hours':0,'stale':False}
  def setbusy(self,x):self.scanning=x;st='disabled' if x else 'normal';self.one.config(state=st);self.all.config(state=st);self.clearb.config(state=st);self.w.config(state=st);self.pub.config(state=st);self.cancelb.config(state='normal' if x else 'disabled')
  def scan_one(self):
@@ -373,7 +394,10 @@ class App(tk.Tk):
   try:remembered,client_id,secret=load_saved_credentials(self.settings_path,self.credential_backend)
   except Exception:
    remembered=bool(settings.get('remember_credentials') and settings.get('client_id'));client_id=str(settings.get('client_id') or '') if remembered else '';secret='';self.status.set('Saved credential unavailable')
-  self.remember_credentials.set(remembered);self.cid.set(client_id);self.sec.set(secret);self.apply_theme()
+  self._loading_credentials=True
+  try:self.remember_credentials.set(remembered);self.cid.set(client_id);self.sec.set(secret)
+  finally:self._loading_credentials=False
+  self.secret_client_id=client_id if secret else None;self.loaded_secret_client_id=self.secret_client_id;self.apply_theme()
  def vt(self,v):return tuple(int(x) for x in re.findall(r'\d+',str(v))[:4])
  def check_updates(self,auto=False):
   try:url=resolve_manifest_url();url+=('&' if '?' in url else '?')+'t='+str(int(time.time()))
