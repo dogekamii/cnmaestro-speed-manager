@@ -14,7 +14,8 @@ CORE_APP_METHODS = (
     "displaypkg", "filt", "sortkey", "sort", "tree_click", "select_visible",
     "deselect_visible", "clear_selection", "show", "preview_rows",
     "publish_status", "execute", "progress_done", "finish_publish", "audit",
-    "apply_theme", "load_settings", "vt", "check_updates", "update_result",
+    # check_updates intentionally differs and is covered by tests/test_updater.py.
+    "apply_theme", "load_settings", "vt", "update_result",
 )
 BEHAVIOR_CONSTANTS = ("PKGS", "OTHER", "PHRASE", "CONCURRENCY", "CACHE_HOURS")
 
