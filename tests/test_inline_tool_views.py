@@ -59,6 +59,17 @@ class InlineToolViewTests(unittest.TestCase):
         sizes = [tkfont.Font(root=self.app, font=label.cget("font")).cget("size") for label in labels]
         self.assertEqual(sizes, [11, 11, 11, 11, 11])
 
+    def test_nested_tool_label_fits_without_clipping(self):
+        self.app.deiconify()
+        self.app.geometry("1280x720")
+        self.app.update()
+        row, _, _, label = self.app.nav_items["speed_manager"]
+        nested_x = label.winfo_rootx() - self.app.sidebar.winfo_rootx()
+        self.assertEqual(self.app.sidebar.winfo_width(), 190)
+        self.assertLessEqual(nested_x, 55)
+        self.assertGreaterEqual(label.winfo_width(), label.winfo_reqwidth())
+        self.assertGreater(nested_x, self.app.nav_items["overview"][3].winfo_rootx() - self.app.sidebar.winfo_rootx())
+
     def test_dense_v120_workspace_embeds_scan_filters_table_and_publish(self):
         self.app.deiconify()
         self.app.geometry("1280x720")

@@ -4,7 +4,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk,messagebox,filedialog
 import httpx,truststore
-APP_VERSION='1.3.1';APP_DIR=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent;UPDATE_CONFIG=APP_DIR/'update_config.json';DEFAULT_MANIFEST_URL='https://raw.githubusercontent.com/dogekamii/Operations-Toolkit/refs/heads/main/latest.json'
+APP_VERSION='1.3.2';APP_DIR=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent;UPDATE_CONFIG=APP_DIR/'update_config.json';DEFAULT_MANIFEST_URL='https://raw.githubusercontent.com/dogekamii/Operations-Toolkit/refs/heads/main/latest.json'
 PKGS={"6 Mbps":("6mbps Package",6451,2150),"10 Mbps":("10mbps Package",10752,1075),"15 Mbps":("15mbps Package",16128,3225),"20 Mbps":("20mbps Package",21500,10752),"25 Mbps":("25mbps Package",26880,3225),"50 Mbps":("50mbps Package",53760,10750),"75 Mbps":("75mbps Package",80640,10750),"100 Mbps":("100mbps Package",107520,21500)}
 OTHER='Other / Unmatched';PHRASE='APPLY SPEED CHANGES';CONCURRENCY=4;CACHE_HOURS=24
 DATA=Path(os.getenv('LOCALAPPDATA',Path.home()))/'cnMaestroSpeedManager';DATA.mkdir(exist_ok=True);DB=DATA/'speed_manager.db';SETTINGS=DATA/'settings.json'
@@ -116,7 +116,7 @@ class App(tk.Tk):
   outer=tk.Frame(parent,bg=self.colors['surface'],highlightbackground=self.colors['border'],highlightcolor=self.colors['border'],highlightthickness=1);body=ttk.Frame(outer,style='Surface.TFrame',padding=(padx,pady));body.pack(fill='both',expand=True);return outer,body
  def ui(self):
   self.configure_styles();c=self.colors;self.shell=tk.Frame(self,bg=c['bg']);self.shell.pack(fill='both',expand=True)
-  self.sidebar=tk.Frame(self.shell,bg=c['sidebar'],width=160,highlightbackground=c['border'],highlightthickness=1);self.sidebar.pack(side='left',fill='y');self.sidebar.pack_propagate(False)
+  self.sidebar=tk.Frame(self.shell,bg=c['sidebar'],width=190,highlightbackground=c['border'],highlightthickness=1);self.sidebar.pack(side='left',fill='y');self.sidebar.pack_propagate(False)
   self.nav_items={};self.service_navigation=[{'key':'cnmaestro','label':'cnMaestro','icon':'☁','tools':[{'key':'speed_manager','label':'Speed Manager'}]}]
   self.nav_container=tk.Frame(self.sidebar,bg=c['sidebar']);self.nav_container.pack(fill='x',pady=(15,0));self.add_nav_row('overview','Overview','⌂')
   for service in self.service_navigation:self.add_service_group(service)
@@ -137,7 +137,7 @@ class App(tk.Tk):
   c=self.colors;row=tk.Frame(self.nav_container,bg=c['sidebar'],height=35,cursor='hand2');row.pack(fill='x',padx=(5,7),pady=1);row.pack_propagate(False);bar=tk.Frame(row,bg=c['sidebar'],width=3);bar.pack(side='left',fill='y');ico=tk.Label(row,text=service['icon'],font=('Segoe UI Symbol',11),width=2,fg=c['accent2'],bg=c['sidebar'],cursor='hand2');ico.pack(side='left',padx=(5,3));text=tk.Label(row,text=service['label'],font=('Segoe UI Semibold',11),anchor='w',fg=c['accent2'],bg=c['sidebar'],cursor='hand2');text.pack(side='left',fill='both',expand=True);chev=tk.Label(row,text='⌄',font=('Segoe UI',9),fg=c['accent2'],bg=c['sidebar'],cursor='hand2');chev.pack(side='right',padx=7)
   child=tk.Frame(self.nav_container,bg=c['sidebar']);child.pack(fill='x');service['row']=row;service['widgets']=(bar,ico,text,chev);service['child_frame']=child;service['expanded']=True
   for w in (row,bar,ico,text,chev):w.bind('<Button-1>',lambda e,s=service:self.toggle_service(s))
-  for tool in service['tools']:self.add_nav_row(tool['key'],tool['label'],'',child,indent=22)
+  for tool in service['tools']:self.add_nav_row(tool['key'],tool['label'],'',child,indent=12)
  def toggle_service(self,service):
   service['expanded']=not service['expanded'];service['widgets'][3].configure(text='⌄' if service['expanded'] else '›')
   if service['expanded']:service['child_frame'].pack(fill='x',after=service['row'])
