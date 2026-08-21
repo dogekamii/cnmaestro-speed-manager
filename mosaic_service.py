@@ -151,6 +151,22 @@ def _number(value):
         return None
 
 
+def _test_time_utc(value) -> str | None:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+        if number > 10_000_000_000:
+            number /= 1000
+        parsed = datetime.fromtimestamp(number, timezone.utc)
+    except (TypeError, ValueError, OSError, OverflowError):
+        parsed = _parse_timestamp(value)
+        if not parsed:
+            return str(value)
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
 def latest_speed_result(data: dict) -> dict | None:
     results = [value for value in _result_container(data).values() if isinstance(value, dict)]
     if not results:
@@ -161,6 +177,7 @@ def latest_speed_result(data: dict) -> dict | None:
     return {
         "status": latest.get("Status"),
         "start_timestamp": str(latest.get("StartTimeStamp")) if latest.get("StartTimeStamp") is not None else None,
+        "test_time_utc": _test_time_utc(latest.get("StartTimeStamp")),
         "download_mbps": download / 1_000_000 if download is not None else None,
         "upload_mbps": upload / 1_000_000 if upload is not None else None,
         "latency_ms": _number(latest.get("PingLatency")),

@@ -102,6 +102,7 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(result["upload_mbps"], 10.0)
         self.assertEqual(result["latency_ms"], 12.0)
         self.assertEqual(result["jitter_ms"], 3.0)
+        self.assertEqual(result["test_time_utc"], "1970-01-01 00:03:20 UTC")
         self.assertNotIn("Host", json.dumps(result))
         self.assertNotIn("ClientIP", json.dumps(result))
         self.assertNotIn("192.0.2", json.dumps(result))

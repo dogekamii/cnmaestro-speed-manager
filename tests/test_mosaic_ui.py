@@ -38,7 +38,7 @@ class MosaicUiTests(unittest.TestCase):
     def test_mosaic_page_has_masked_credentials_candidate_table_and_actions(self):
         self.assertEqual(self.app.mosaic_password_entry.cget("show"), "*")
         self.assertEqual(tuple(self.app.mosaic_tree["columns"]), (
-            "select", "customer", "code", "subscriber", "device", "model", "match", "eligibility", "state", "download", "upload", "latency", "jitter"
+            "select", "customer", "code", "subscriber", "device", "model", "match", "eligibility", "state", "test_time", "download", "upload", "latency", "jitter"
         ))
         labels = {widget.cget("text") for widget in self.app.pages["mosaic_speed_test"].winfo_children() if hasattr(widget, "cget") and "text" in widget.keys()}
         self.assertIn("Mosaic Speed Test", labels)
@@ -74,6 +74,55 @@ class MosaicUiTests(unittest.TestCase):
 
 
 
+
+
+    def test_clear_selected_and_clear_all_only_change_visible_candidates(self):
+        self.app.pending_speedtest_customers = [{"name": "10014 Test"}]
+        self.app.mosaic_candidates = [
+            {"key": "2", "eligible": True, "customer": "10014 A"},
+            {"key": "3", "eligible": True, "customer": "10015 B"},
+        ]
+        self.app.mosaic_checked = {"2"}
+        self.app.clear_selected_mosaic_candidates()
+        self.assertEqual([row["key"] for row in self.app.mosaic_candidates], ["3"])
+        self.assertEqual(self.app.mosaic_checked, set())
+        self.app.clear_all_mosaic_candidates()
+        self.assertEqual(self.app.mosaic_candidates, [])
+        self.assertEqual(self.app.pending_speedtest_customers, [])
+
+    def test_csv_export_is_excel_compatible_and_formula_safe(self):
+        import csv
+        from pathlib import Path
+        output = Path(_TEST_ROOT) / "speed-tests.csv"
+        self.app.mosaic_candidates = [{
+            "customer": "=danger", "subscriber_code": "10014", "subscriber_id": "1", "device_id": "2",
+            "model": "ADTRAN", "match": "code_and_name", "eligibility": "Ready", "state": "verified",
+            "test_time_utc": "2026-08-21 01:02:03 UTC", "download_mbps": 50.0, "upload_mbps": 10.0,
+            "latency_ms": 12.0, "jitter_ms": 3.0,
+        }]
+        with mock.patch.object(toolkit.filedialog, "asksaveasfilename", return_value=str(output)), mock.patch.object(toolkit.messagebox, "showinfo"):
+            self.app.export_mosaic_csv()
+        with output.open(encoding="utf-8-sig", newline="") as handle: rows=list(csv.DictReader(handle))
+        self.assertEqual(rows[0]["Customer"], "'=danger")
+        self.assertEqual(rows[0]["Test time (UTC)"], "2026-08-21 01:02:03 UTC")
+        self.assertEqual(rows[0]["Download Mbps"], "50.0")
+
+    def test_result_management_controls_and_test_time_column_exist(self):
+        self.assertEqual(self.app.mosaic_tree.heading("test_time")["text"], "Test time (UTC)")
+        self.assertEqual(self.app.mosaic_remove_button.cget("text"), "Remove selected")
+        self.assertEqual(self.app.mosaic_clear_button.cget("text"), "Clear all")
+        self.assertEqual(self.app.mosaic_export_button.cget("text"), "Export CSV")
+
+
+    def test_mosaic_actions_without_connection_notify_user(self):
+        self.app.mosaic_api = None
+        self.app.mosaic_search_code.set("10014")
+        with mock.patch.object(toolkit.messagebox, "showerror") as error:
+            self.app.search_mosaic_subscriber()
+            self.app.run_selected_mosaic_tests()
+            self.app.reconcile_mosaic_unknown()
+        self.assertEqual(error.call_count, 3)
+        self.assertTrue(all("Mosaic" in call.args[0] for call in error.call_args_list))
 
     def test_independent_subscriber_code_search_builds_candidate(self):
         class FakeApi:

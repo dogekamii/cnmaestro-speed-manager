@@ -8,6 +8,8 @@ Operations Toolkit 1.5.0 is a local candidate that preserves the working cnMaest
 - Matches cnMaestro customers to Mosaic by an exact leading subscriber code; normalized customer names are confidence checks only. Missing, duplicate, and multi-device matches remain operator-review states.
 - Adds capability preflight and clearly marks unsupported routers such as SR905acv instead of offering a test action.
 - Adds an in-app handoff after successful cnMaestro upgrades; it never starts tests automatically.
+- Shows test date/time in UTC and supports clearing visible rows or exporting Excel-compatible CSV.
+- Provides a structured pop-out Preview Changes table while keeping update checks in Settings.
 - Runs explicitly selected supported Ookla tests sequentially, with a durable local journal and unknown-outcome reconciliation.
 - Mosaic passwords are optionally stored per Windows user in Windows Credential Manager, never plaintext, and never auto-connect.
 - Preserves the cnMaestro API and guarded operational behavior from previous releases.
