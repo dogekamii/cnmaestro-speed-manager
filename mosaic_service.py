@@ -45,6 +45,10 @@ class AmbiguousSubmissionError(RuntimeError):
     """A non-idempotent Mosaic write may have reached the server."""
 
 
+class MosaicDiagnosticError(RuntimeError):
+    """The router/Mosaic diagnostic reached a definite terminal error."""
+
+
 def parse_customer_identity(value: str) -> CustomerIdentity | None:
     match = re.match(r"^\s*(\d{4,12})(?:\s+|[-_:]+)(.*?)\s*$", str(value or ""))
     if not match:
@@ -146,6 +150,20 @@ def evaluate_eligibility(record: dict, support: dict, application_status: dict, 
         if isinstance(action, dict) and _bool(action.get("pendingSync")):
             return EligibilityResult(False, "Another Mosaic action is pending")
     return EligibilityResult(True, "Ready")
+
+
+def _safe_diagnostic_error(data: dict) -> str | None:
+    try:
+        value = data["applications"]["OoklaSpeedTest"]["dto"]["Settings"]["OoklaSpeedTest"]
+    except (KeyError, TypeError):
+        return None
+    if str(value.get("State") or "").casefold() != "error" or _bool(value.get("ExpectingResults")):
+        return None
+    message = str(value.get("ErrorMessage") or "Ookla speed test failed")[:500]
+    message = re.sub(r"https?://\S+", "[URL]", message, flags=re.I)
+    message = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "[IP]", message)
+    message = re.sub(r"(?i)(password|token|secret)\s*[=:]\s*[^\s,;]+", r"\1=[REDACTED]", message)
+    return "Mosaic diagnostic failed: " + message
 
 
 def _result_container(data: dict) -> dict:
@@ -480,7 +498,11 @@ class MosaicPortalClient:
         for attempt in range(max_polls):
             if attempt and poll_interval:
                 await asyncio.sleep(poll_interval)
-            result = await self.latest_result(device_id)
+            data = (await self._request("GET", f"/prime-home/api/v1/devices/{device_id}/data")).json()
+            diagnostic_error = _safe_diagnostic_error(data)
+            if diagnostic_error:
+                raise MosaicDiagnosticError(diagnostic_error)
+            result = latest_speed_result(data)
             if result and (
                 previous_timestamp is None
                 or _timestamp_key(result.get("start_timestamp")) > _timestamp_key(previous_timestamp)
@@ -556,6 +578,9 @@ async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJou
             raise RuntimeError("Mosaic did not confirm completion of OoklaSpeedTest")
         emit("Waiting for result")
         metrics = await client.wait_for_speed_result(device_id, previous_timestamp=previous.get("start_timestamp") if previous else None)
+    except MosaicDiagnosticError as exc:
+        journal.transition(entry_id, "failed", detail=str(exc));emit("Failed")
+        return {"entry_id": entry_id, "state": "failed", "detail": str(exc)}
     except Exception as exc:
         journal.transition(entry_id, "unknown", detail=str(exc));emit("Unknown")
         return {"entry_id": entry_id, "state": "unknown", "detail": str(exc)}
@@ -592,6 +617,9 @@ async def reconcile_journal_entry(client: MosaicPortalClient, journal: MosaicJou
             poll_interval=0,
             max_polls=1,
         )
+    except MosaicDiagnosticError as exc:
+        journal.transition(entry_id, "failed", detail=str(exc))
+        return {"entry_id": entry_id, "device_id": str(entry["device_id"]), "state": "failed", "detail": str(exc)}
     except Exception as exc:
         if age_seconds >= release_age_seconds:
             try:

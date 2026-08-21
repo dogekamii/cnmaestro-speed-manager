@@ -9,6 +9,7 @@ import httpx
 
 from mosaic_service import (
     AmbiguousSubmissionError,
+    MosaicDiagnosticError,
     MosaicJournal,
     MosaicPortalClient,
     evaluate_eligibility,
@@ -211,6 +212,7 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
             if self.failure == "after": raise TimeoutError("ambiguous poll")
             return {"completed": True, "solicitStatus": {"status": "SUCCESS"}, "syncApplications": [{"appCode": "OoklaSpeedTest", "complete": True}]}
         async def wait_for_speed_result(self, device_id, previous_timestamp, **kwargs):
+            if self.failure == "diagnostic": raise MosaicDiagnosticError("Mosaic diagnostic failed: unable to retrieve your ip info")
             return {"start_timestamp": "200", "download_mbps": 50.0, "upload_mbps": 10.0, "latency_ms": 12.0, "jitter_ms": 3.0}
 
 
@@ -341,6 +343,23 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(outcome["state"], "unknown")
             self.assertIn("did not confirm completion", outcome["detail"])
 
+
+    async def test_terminal_diagnostic_error_is_definite_failure_and_unlocks_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal=MosaicJournal(Path(directory)/"mosaic.db");client=self.FakeClient("diagnostic")
+            outcome=await execute_journaled_ookla(client,journal,"10014","2","SDG",record=self.managed_record())
+            self.assertEqual(outcome["state"],"failed")
+            self.assertIn("unable to retrieve your ip info",outcome["detail"])
+            self.assertEqual(journal.get(outcome["entry_id"])["state"],"failed")
+            journal.assert_can_start("2")
+
+    async def test_reconciliation_terminal_diagnostic_error_becomes_failed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal=MosaicJournal(Path(directory)/"mosaic.db");entry=journal.plan("10014","2","SDG",previous_timestamp="100");journal.transition(entry,"submitting");journal.transition(entry,"unknown",detail="result timeout")
+            outcome=await reconcile_journal_entry(self.FakeClient("diagnostic"),journal,journal.get(entry))
+            self.assertEqual(outcome["state"],"failed")
+            journal.assert_can_start("2")
+
     async def test_post_submit_timeout_is_unknown_and_blocks_retry(self):
         with tempfile.TemporaryDirectory() as directory:
             journal = MosaicJournal(Path(directory) / "mosaic.db")
@@ -440,6 +459,21 @@ class PortalClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["download_mbps"], 25.0)
         self.assertNotIn("redact", json.dumps(result))
 
+
+
+    async def test_result_poll_surfaces_sanitized_terminal_diagnostic_error(self):
+        reads=0
+        def handler(request):
+            nonlocal reads;reads+=1
+            data={"applications":{"OoklaSpeedTest":{"dto":{"Settings":{"OoklaSpeedTest":{"State":"Error","ExpectingResults":"false","ErrorMessage":"unable to retrieve your ip info from 192.0.2.10 token=secret-value","Results":{}}}}}}}
+            return httpx.Response(200,json=data)
+        client=MosaicPortalClient("https://mosaic.example","user","pass",transport=httpx.MockTransport(handler));client.set_session_for_test("session","xsrf")
+        with self.assertRaises(MosaicDiagnosticError) as raised:await client.wait_for_speed_result("2",previous_timestamp="100",poll_interval=0,max_polls=3)
+        message=str(raised.exception)
+        self.assertIn("unable to retrieve your ip info",message)
+        self.assertNotIn("192.0.2.10",message)
+        self.assertNotIn("secret-value",message)
+        self.assertEqual(reads,1)
 
     async def test_wait_for_result_rejects_stale_result_until_timestamp_changes(self):
         reads = 0
