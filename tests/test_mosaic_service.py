@@ -247,6 +247,21 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.puts, 0)
 
 
+
+    async def test_old_stale_status_url_without_baseline_can_be_release_candidate(self):
+        class StaleStatusNoBaseline(self.FakeClient):
+            async def poll_action(self, status_url, **kwargs): raise TimeoutError("old status unavailable")
+            async def wait_for_speed_result(self, device_id, previous_timestamp, **kwargs): raise TimeoutError("no baseline result match")
+            async def read_device(self, device_id):
+                return {"support": {}, "application_status": {"applications": {"OoklaSpeedTest": {"state": "OK"}}}, "actions": {"applications": {"OoklaSpeedTest": {"pendingSync": False}}}, "data": {"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"State": "Complete", "ExpectingResults": "false", "Results": {"1": {"Status": "Complete", "StartTimeStamp": "100"}}}}}}}}}
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            entry = journal.plan("10014", "2", "SDG", previous_timestamp=None);journal.transition(entry, "submitting");journal.transition(entry, "submitted", status_url="https://mosaic.example/prime-home/api/v1/action-status/old")
+            row=journal.get(entry);created=datetime.fromisoformat(row["created_at"])
+            outcome=await reconcile_journal_entry(StaleStatusNoBaseline(),journal,row,now=created+timedelta(minutes=11))
+            self.assertEqual(outcome["state"],"release_candidate")
+            self.assertEqual(journal.get(entry)["state"],"unknown")
+
     async def test_old_statusless_clear_remote_state_becomes_release_candidate(self):
         class NoRemoteEvidence(self.FakeClient):
             async def wait_for_speed_result(self, device_id, previous_timestamp, **kwargs): raise TimeoutError("no newer result")

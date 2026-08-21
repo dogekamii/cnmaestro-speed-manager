@@ -596,14 +596,15 @@ async def reconcile_journal_entry(client: MosaicPortalClient, journal: MosaicJou
             max_polls=1,
         )
     except Exception as exc:
-        if not entry.get("status_url") and age_seconds >= release_age_seconds and entry.get("previous_timestamp") is not None:
+        if age_seconds >= release_age_seconds:
             try:
                 bundle = await client.read_device(str(entry["device_id"]))
                 pending = [name for name, action in bundle.get("actions", {}).get("applications", {}).items() if isinstance(action, dict) and _bool(action.get("pendingSync"))]
                 try:value = bundle["data"]["applications"]["OoklaSpeedTest"]["dto"]["Settings"]["OoklaSpeedTest"]
                 except (KeyError, TypeError):value = {}
                 latest = latest_speed_result(bundle.get("data", {}))
-                no_newer = not latest or _timestamp_key(latest.get("start_timestamp")) <= _timestamp_key(entry.get("previous_timestamp"))
+                baseline = entry.get("previous_timestamp") if entry.get("previous_timestamp") is not None else str(created.timestamp())
+                no_newer = not latest or _timestamp_key(latest.get("start_timestamp")) <= _timestamp_key(baseline)
                 app_state = str(bundle.get("application_status", {}).get("applications", {}).get("OoklaSpeedTest", {}).get("state") or "").casefold()
                 terminal_clear = not pending and str(value.get("State") or "").casefold() == "complete" and not _bool(value.get("ExpectingResults")) and no_newer and app_state in {"ok", "complete", "completed"}
                 if terminal_clear:
