@@ -6,6 +6,8 @@ Operations Toolkit 1.5.0 is a local candidate that preserves the working cnMaest
 
 - Added nested **Mosaic > Speed Test** in-app navigation using the existing dense dark workspace.
 - Matches cnMaestro customers to Mosaic by an exact leading subscriber code; normalized customer names are confidence checks only. Missing, duplicate, and multi-device matches remain operator-review states.
+- Search & add appends multiple subscribers into one selected bulk queue without replacing prior rows or results.
+- Shows live per-customer stages and an overall progress bar while sequential tests run.
 - Adds capability preflight and clearly marks unsupported routers such as SR905acv instead of offering a test action.
 - Adds an in-app handoff after successful cnMaestro upgrades; it never starts tests automatically.
 - Shows test date/time in UTC and supports clearing visible rows or exporting Excel-compatible CSV.

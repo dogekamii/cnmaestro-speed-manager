@@ -307,6 +307,14 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(outcome["state"], "verified")
             self.assertEqual(journal.get(unknown)["state"], "verified")
 
+
+    async def test_success_reports_detailed_progress_stages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal=MosaicJournal(Path(directory)/"mosaic.db");client=self.FakeClient();events=[]
+            outcome=await execute_journaled_ookla(client,journal,"10014","2","SDG",record=self.managed_record(),progress=events.append)
+            self.assertEqual(outcome["state"],"verified")
+            self.assertEqual(events,["Checking eligibility","Preparing request","Submitting to Mosaic","Waiting for router","Waiting for result","Cleaning up","Verified"])
+
     async def test_success_is_verified(self):
         with tempfile.TemporaryDirectory() as directory:
             journal = MosaicJournal(Path(directory) / "mosaic.db")

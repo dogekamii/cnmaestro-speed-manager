@@ -1,4 +1,4 @@
-import asyncio,csv,json,os,re,sqlite3,threading,time,ssl,random,sys,webbrowser
+import asyncio,csv,json,os,queue,re,sqlite3,threading,time,ssl,random,sys,webbrowser
 from datetime import datetime,timezone
 from pathlib import Path
 import tkinter as tk
@@ -138,7 +138,7 @@ class API:
   finally:await c.aclose()
 class App(tk.Tk):
  def __init__(self):
-  super().__init__();initdb();self.settings_path=SETTINGS;self.mosaic_journal=MosaicJournal(DB);self.credential_backend=keyring;self.title('Operations Toolkit');self.geometry('1280x720');self.minsize(1120,680);self.api=None;self.rows=cached();self.preview=[];self.checked=set();self.cancel=threading.Event();self.scanning=False;self.sort_col='name';self.sort_rev=False;self.job_status={};self.mosaic_api=None;self.mosaic_candidates=[];self.mosaic_checked=set();self.mosaic_running=False;self.pending_speedtest_customers=[];self._publish_handoff_signature=None;self.style=ttk.Style();self.ui();self.protocol('WM_DELETE_WINDOW',self.close_app)
+  super().__init__();initdb();self.settings_path=SETTINGS;self.mosaic_journal=MosaicJournal(DB);self.credential_backend=keyring;self.title('Operations Toolkit');self.geometry('1280x720');self.minsize(1120,680);self.api=None;self.rows=cached();self.preview=[];self.checked=set();self.cancel=threading.Event();self.scanning=False;self.sort_col='name';self.sort_rev=False;self.job_status={};self.mosaic_api=None;self.mosaic_candidates=[];self.mosaic_checked=set();self.mosaic_running=False;self.mosaic_progress_events=queue.Queue();self.mosaic_progress_after=None;self.pending_speedtest_customers=[];self._publish_handoff_signature=None;self.style=ttk.Style();self.ui();self.protocol('WM_DELETE_WINDOW',self.close_app)
   if os.getenv('OPERATIONS_TOOLKIT_PREVIEW'):self.configure_styles()
   else:self.load_settings();self.configure_styles() if self.theme.get()=='Dark' else None
   self.render();self.show_page('speed_manager')
@@ -248,7 +248,7 @@ class App(tk.Tk):
   o,t=self.card(p,0,0);o.grid(row=3,column=0,sticky='nsew',pady=(0,5));t.columnconfigure(0,weight=1);t.rowconfigure(0,weight=1);cols=('select','customer','code','subscriber','device','model','match','eligibility','state','test_time','download','upload','latency','jitter');heads=('Test','Customer','Code','Subscriber','Device','Router model','Match','Eligibility','Test status','Test time (UTC)','Download','Upload','Latency','Jitter');self.mosaic_tree=ttk.Treeview(t,columns=cols,show='headings',selectmode='none',height=10)
   for col,head in zip(cols,heads):self.mosaic_tree.heading(col,text=head);self.mosaic_tree.column(col,width=52 if col=='select' else (170 if col in ('customer','eligibility') else (155 if col=='test_time' else 92)),stretch=False,anchor='center' if col=='select' else 'w')
   self.mosaic_tree.bind('<Button-1>',self.mosaic_tree_click);y=ttk.Scrollbar(t,orient='vertical',command=self.mosaic_tree.yview);x=ttk.Scrollbar(t,orient='horizontal',command=self.mosaic_tree.xview);self.mosaic_tree.configure(yscrollcommand=y.set,xscrollcommand=x.set);self.mosaic_tree.grid(row=0,column=0,sticky='nsew');y.grid(row=0,column=1,sticky='ns');x.grid(row=1,column=0,sticky='ew')
-  o,a=self.card(p,10,6);o.grid(row=4,column=0,sticky='ew');ttk.Label(a,text='Subscriber Code',style='SurfaceMuted.TLabel').grid(row=0,column=0,sticky='w');self.mosaic_search_entry=ttk.Entry(a,textvariable=self.mosaic_search_code,width=18);self.mosaic_search_entry.grid(row=0,column=1,padx=(5,5));self.mosaic_search_button=ttk.Button(a,text='Search Mosaic',style='Accent.TButton',command=self.search_mosaic_subscriber);self.mosaic_search_button.grid(row=0,column=2);self.mosaic_find_button=ttk.Button(a,text='Match Speed Manager selection',command=self.find_mosaic_matches);self.mosaic_find_button.grid(row=0,column=3,padx=(8,0));self.mosaic_run_button=ttk.Button(a,text='Run selected tests',style='Accent.TButton',command=self.run_selected_mosaic_tests);self.mosaic_run_button.grid(row=1,column=0,columnspan=2,pady=(6,0),sticky='w');self.mosaic_reconcile_button=ttk.Button(a,text='Check uncertain tests',command=self.reconcile_mosaic_unknown);self.mosaic_reconcile_button.grid(row=1,column=2,padx=(5,0),pady=(6,0));self.mosaic_remove_button=ttk.Button(a,text='Remove selected',command=self.clear_selected_mosaic_candidates);self.mosaic_remove_button.grid(row=1,column=3,padx=(5,0),pady=(6,0));self.mosaic_clear_button=ttk.Button(a,text='Clear all',command=self.clear_all_mosaic_candidates);self.mosaic_clear_button.grid(row=1,column=4,padx=(5,0),pady=(6,0));self.mosaic_export_button=ttk.Button(a,text='Export CSV',command=self.export_mosaic_csv);self.mosaic_export_button.grid(row=1,column=5,padx=(5,0),pady=(6,0));self.mosaic_clear_stale_button=ttk.Button(a,text='Clear stale request',command=self.clear_selected_stale_request);self.mosaic_clear_stale_button.grid(row=2,column=0,columnspan=2,sticky='w',pady=(6,0));self.mosaic_back_button=ttk.Button(a,text='Back to Speed Manager',command=lambda:self.show_page('speed_manager'));self.mosaic_back_button.grid(row=2,column=2,sticky='w',padx=(5,0),pady=(6,0));self.mosaic_action_status=tk.StringVar(value='No speed-test operation active.');ttk.Label(a,textvariable=self.mosaic_action_status,style='SurfaceMuted.TLabel').grid(row=2,column=3,columnspan=3,sticky='w',padx=(8,0),pady=(6,0))
+  o,a=self.card(p,10,6);o.grid(row=4,column=0,sticky='ew');ttk.Label(a,text='Subscriber Code',style='SurfaceMuted.TLabel').grid(row=0,column=0,sticky='w');self.mosaic_search_entry=ttk.Entry(a,textvariable=self.mosaic_search_code,width=18);self.mosaic_search_entry.grid(row=0,column=1,padx=(5,5));self.mosaic_search_button=ttk.Button(a,text='Search & add',style='Accent.TButton',command=self.search_mosaic_subscriber);self.mosaic_search_button.grid(row=0,column=2);self.mosaic_find_button=ttk.Button(a,text='Match Speed Manager selection',command=self.find_mosaic_matches);self.mosaic_find_button.grid(row=0,column=3,padx=(8,0));self.mosaic_run_button=ttk.Button(a,text='Run selected tests',style='Accent.TButton',command=self.run_selected_mosaic_tests);self.mosaic_run_button.grid(row=1,column=0,columnspan=2,pady=(6,0),sticky='w');self.mosaic_reconcile_button=ttk.Button(a,text='Check uncertain tests',command=self.reconcile_mosaic_unknown);self.mosaic_reconcile_button.grid(row=1,column=2,padx=(5,0),pady=(6,0));self.mosaic_remove_button=ttk.Button(a,text='Remove selected',command=self.clear_selected_mosaic_candidates);self.mosaic_remove_button.grid(row=1,column=3,padx=(5,0),pady=(6,0));self.mosaic_clear_button=ttk.Button(a,text='Clear all',command=self.clear_all_mosaic_candidates);self.mosaic_clear_button.grid(row=1,column=4,padx=(5,0),pady=(6,0));self.mosaic_export_button=ttk.Button(a,text='Export CSV',command=self.export_mosaic_csv);self.mosaic_export_button.grid(row=1,column=5,padx=(5,0),pady=(6,0));self.mosaic_clear_stale_button=ttk.Button(a,text='Clear stale request',command=self.clear_selected_stale_request);self.mosaic_clear_stale_button.grid(row=2,column=0,columnspan=2,sticky='w',pady=(6,0));self.mosaic_back_button=ttk.Button(a,text='Back to Speed Manager',command=lambda:self.show_page('speed_manager'));self.mosaic_back_button.grid(row=2,column=2,sticky='w',padx=(5,0),pady=(6,0));self.mosaic_action_status=tk.StringVar(value='No speed-test operation active.');ttk.Label(a,textvariable=self.mosaic_action_status,style='SurfaceMuted.TLabel').grid(row=2,column=3,columnspan=3,sticky='w',padx=(8,0),pady=(6,0));self.mosaic_progress=ttk.Progressbar(a,mode='determinate');self.mosaic_progress.grid(row=3,column=0,columnspan=6,sticky='ew',pady=(6,0))
  def on_publish_progress_changed(self,*_):
   text=self.progtext.get()
   if not text.startswith('Completed |') or text==self._publish_handoff_signature:return
@@ -287,7 +287,7 @@ class App(tk.Tk):
   self.mosaic_action_status.set(f'Searching Mosaic for {code}...')
   async def work():
    records=await self.mosaic_api.search_subscriber(code);exact=[record for record in records if str(record.get('fields',{}).get('subscriberCode') or '')==code];name=exact[0].get('fields',{}).get('fullName') if exact else 'Mosaic subscriber';return await self.mosaic_candidates_for_records({'name':f'{code} {name or "Mosaic subscriber"}'},0,records)
-  self.bg(work(),self.finish_mosaic_matches)
+  self.bg(work(),self.finish_mosaic_search_add)
  def find_mosaic_matches(self):
   if not self.mosaic_api:return messagebox.showerror('Mosaic','Connect to Mosaic first')
   customers=self.mosaic_source_customers()
@@ -300,9 +300,20 @@ class App(tk.Tk):
     if not identity:found.append(self.mosaic_candidate(customer,index,None,None));continue
     records=await self.mosaic_api.search_subscriber(identity.subscriber_code);found.extend(await self.mosaic_candidates_for_records(customer,index,records))
    return found
-  self.bg(work(),self.finish_mosaic_matches)
+  self.bg(work(),self.finish_mosaic_search_add)
  def mosaic_candidate(self,customer,index,match,eligibility):
   fields=match.record.get('fields',{}) if match and match.record else {};status=match.status if match else 'missing_code';reason=match.reason if match else 'Customer name has no leading subscriber code';eligible=bool(eligibility and eligibility.eligible);return {'key':str(fields.get('deviceId') or f'unmatched-{index}'),'selected':False,'customer':customer.get('name',''),'subscriber_code':match.subscriber_code if match else None,'subscriber_id':fields.get('subscriberId'),'device_id':fields.get('deviceId'),'model':fields.get('model'),'match':match.confidence if match and match.confidence else status,'eligible':eligible,'eligibility':eligibility.reason if eligibility else reason,'state':'ready' if eligible else 'review','download_mbps':None,'upload_mbps':None,'latency_ms':None,'jitter_ms':None,'test_time_utc':None,'stale_pending':bool(eligibility and eligibility.stale_pending),'record':match.record if match and match.record else None}
+ def finish_mosaic_search_add(self,result,error):
+  if error:self.mosaic_action_status.set('Search error: '+str(error));return
+  existing={str(candidate.get('key')):candidate for candidate in self.mosaic_candidates};added=updated=0
+  result_fields=('test_time_utc','download_mbps','upload_mbps','latency_ms','jitter_ms')
+  for incoming in result:
+   key=str(incoming.get('key'))
+   if key not in existing:self.mosaic_candidates.append(incoming);existing[key]=incoming;added+=1;continue
+   current=existing[key];preserved={field:current.get(field) for field in result_fields if current.get(field) is not None};verified=current.get('state')=='verified';current.update(incoming);current.update(preserved)
+   if verified:current['state']='verified'
+   updated+=1
+  self.render_mosaic_candidates();self.mosaic_action_status.set(f'Added {added} | Updated {updated} | Total {len(self.mosaic_candidates)} | Selected {len(self.mosaic_checked)}')
  def finish_mosaic_matches(self,result,error):
   if error:self.mosaic_action_status.set('Match error: '+str(error));return
   self.mosaic_candidates=result;self.mosaic_checked.clear();self.render_mosaic_candidates();ready=sum(c['eligible'] for c in result);self.mosaic_action_status.set(f'{len(result)} matched/reviewed | {ready} eligible')
@@ -354,23 +365,55 @@ class App(tk.Tk):
    writer=csv.DictWriter(handle,fieldnames=fields);writer.writeheader()
    for row in self.mosaic_candidates:writer.writerow({key:self.csv_cell(value) for key,value in {'Customer':row.get('customer'),'Subscriber Code':row.get('subscriber_code'),'Subscriber ID':row.get('subscriber_id'),'Device ID':row.get('device_id'),'Router Model':row.get('model'),'Match':row.get('match'),'Eligibility':row.get('eligibility'),'Test status':row.get('state'),'Test time (UTC)':row.get('test_time_utc'),'Download Mbps':row.get('download_mbps'),'Upload Mbps':row.get('upload_mbps'),'Latency ms':row.get('latency_ms'),'Jitter ms':row.get('jitter_ms')}.items()})
   messagebox.showinfo('Speed-test data exported',f'{len(self.mosaic_candidates)} row(s) exported to:\n{path}')
+ def post_mosaic_progress(self,candidate,index,total,stage,outcome=None):
+  self.mosaic_progress_events.put({'key':candidate.get('key'),'index':index,'total':total,'stage':stage,'outcome':outcome})
+ def apply_mosaic_outcome(self,candidate,outcome):
+  candidate['state']=outcome.get('state','unknown')
+  if outcome.get('metrics'):candidate.update(outcome['metrics'])
+  if outcome.get('cleanup',{}).get('unknown'):candidate['stale_pending']=True;candidate['eligibility']='Result verified; stale cleanup needs review'
+  elif outcome.get('cleanup',{}).get('cleared'):candidate['stale_pending']=False
+  if outcome.get('detail'):candidate['eligibility']=outcome['detail']
+ def drain_mosaic_progress(self):
+  changed=False
+  while True:
+   try:event=self.mosaic_progress_events.get_nowait()
+   except queue.Empty:break
+   candidate=next((row for row in self.mosaic_candidates if str(row.get('key'))==str(event.get('key'))),None)
+   if candidate:
+    if event.get('outcome'):self.apply_mosaic_outcome(candidate,event['outcome']);self.mosaic_progress['value']=event['index']
+    else:candidate['state']=event['stage']
+    self.mosaic_action_status.set(f"Customer {event['index']} of {event['total']} — {candidate.get('customer','')}: {event['stage']}");changed=True
+  if changed:self.render_mosaic_candidates()
+  if self.mosaic_running:self.mosaic_progress_after=self.after(100,self.drain_mosaic_progress)
+ def start_mosaic_progress_poll(self):
+  if self.mosaic_progress_after:
+   try:self.after_cancel(self.mosaic_progress_after)
+   except Exception:pass
+  self.mosaic_progress_after=self.after(100,self.drain_mosaic_progress)
  def run_selected_mosaic_tests(self):
   if self.mosaic_running:return
   if not self.mosaic_api:return messagebox.showerror('Mosaic','Connect to Mosaic first')
   selected=[c for c in self.mosaic_candidates if c['key'] in self.mosaic_checked and c.get('eligible')]
   if not selected:return messagebox.showinfo('Mosaic','Select at least one eligible router.')
-  self.mosaic_running=True;self.mosaic_run_button.configure(state='disabled');self.mosaic_action_status.set(f'Running 1 of {len(selected)}...')
+  while True:
+   try:self.mosaic_progress_events.get_nowait()
+   except queue.Empty:break
+  total=len(selected);self.mosaic_running=True;self.mosaic_run_button.configure(state='disabled');self.mosaic_progress.configure(maximum=total,value=0);self.mosaic_action_status.set(f'Preparing bulk speed test for {total} customer(s)...');self.start_mosaic_progress_poll()
   async def work():
-   for index,c in enumerate(selected,1):
-    device=str(c['device_id']);c['state']='submitting';outcome=await execute_journaled_ookla(self.mosaic_api,self.mosaic_journal,str(c['subscriber_code']),device,str(c.get('model') or ''),record=c['record']);c['state']=outcome['state']
-    if outcome.get('metrics'):c.update(outcome['metrics'])
-    if outcome.get('cleanup',{}).get('unknown'):c['stale_pending']=True;c['eligibility']='Result verified; stale cleanup needs review'
-    elif outcome.get('cleanup',{}).get('cleared'):c['stale_pending']=False
-    if outcome.get('detail'):c['eligibility']=outcome['detail']
-   return selected
-  self.bg(work(),lambda result,error:self.finish_mosaic_tests(result,error))
+   outcomes=[]
+   for index,candidate in enumerate(selected,1):
+    progress=lambda stage,candidate=candidate,index=index:self.post_mosaic_progress(candidate,index,total,stage)
+    outcome=await execute_journaled_ookla(self.mosaic_api,self.mosaic_journal,str(candidate['subscriber_code']),str(candidate['device_id']),str(candidate.get('model') or ''),record=candidate['record'],progress=progress);outcomes.append((candidate.get('key'),outcome));self.post_mosaic_progress(candidate,index,total,outcome.get('state','unknown').title(),outcome)
+   return outcomes
+  self.bg(work(),self.finish_mosaic_tests)
  def finish_mosaic_tests(self,result,error):
-  self.mosaic_running=False;self.mosaic_run_button.configure(state='normal');self.render_mosaic_candidates();self.mosaic_action_status.set('Speed-test error: '+str(error) if error else 'Speed-test batch complete. Review results and unknown states.')
+  self.mosaic_running=False
+  if self.mosaic_progress_after:
+   try:self.after_cancel(self.mosaic_progress_after)
+   except Exception:pass
+  self.mosaic_progress_after=None;self.drain_mosaic_progress();self.mosaic_run_button.configure(state='normal');self.render_mosaic_candidates()
+  if error:self.mosaic_action_status.set('Speed-test error: '+str(error));return
+  states=[outcome.get('state') for _,outcome in (result or [])];self.mosaic_action_status.set(f"Bulk complete — Verified {states.count('verified')} | Failed {states.count('failed')} | Unknown {states.count('unknown')} | Ineligible {states.count('ineligible')}")
  def reconcile_mosaic_unknown(self):
   if not self.mosaic_api:return messagebox.showerror('Mosaic','Connect to Mosaic first')
   entries=self.mosaic_journal.unresolved()
@@ -389,6 +432,11 @@ class App(tk.Tk):
    self.render_mosaic_candidates()
   remaining=len(outcomes)-resolved-released;self.mosaic_action_status.set(f'{resolved} reconciled | {released} released | {remaining} still locked')
  def close_app(self):
+  self.mosaic_running=False
+  if self.mosaic_progress_after:
+   try:self.after_cancel(self.mosaic_progress_after)
+   except Exception:pass
+   self.mosaic_progress_after=None
   if self.mosaic_api:self.mosaic_api.clear_session()
   self.mosaic_password.set('');self.sec.set('');self.destroy()
  def build_overview(self):

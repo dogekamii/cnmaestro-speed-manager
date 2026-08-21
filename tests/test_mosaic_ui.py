@@ -192,6 +192,33 @@ class MosaicUiTests(unittest.TestCase):
         self.assertEqual(error.call_count, 3)
         self.assertTrue(all("Mosaic" in call.args[0] for call in error.call_args_list))
 
+
+    def test_search_add_appends_customer_and_preserves_existing_selection(self):
+        existing={"key":"2","customer":"10014 Customer A","device_id":"2","eligible":True,"state":"ready","download_mbps":None}
+        added={"key":"3","customer":"10015 Customer B","device_id":"3","eligible":True,"state":"ready","download_mbps":None}
+        self.app.mosaic_candidates=[existing];self.app.mosaic_checked={"2"}
+        self.app.finish_mosaic_search_add([added],None)
+        self.assertEqual([row["key"] for row in self.app.mosaic_candidates],["2","3"])
+        self.assertEqual(self.app.mosaic_checked,{"2"})
+        self.assertIn("Added 1",self.app.mosaic_action_status.get())
+
+    def test_readding_existing_device_refreshes_preflight_without_erasing_result(self):
+        existing={"key":"2","customer":"10014 Customer A","device_id":"2","eligible":True,"eligibility":"Ready","state":"verified","download_mbps":50.0,"upload_mbps":10.0,"test_time_utc":"2026-08-21 01:00:00 UTC","record":{"fields":{"old":True}}}
+        refreshed={"key":"2","customer":"10014 Customer A Updated","device_id":"2","eligible":False,"eligibility":"Another Mosaic action is pending","state":"review","download_mbps":None,"upload_mbps":None,"test_time_utc":None,"record":{"fields":{"new":True}}}
+        self.app.mosaic_candidates=[existing];self.app.mosaic_checked={"2"}
+        self.app.finish_mosaic_search_add([refreshed],None)
+        row=self.app.mosaic_candidates[0]
+        self.assertEqual(len(self.app.mosaic_candidates),1)
+        self.assertEqual(row["customer"],"10014 Customer A Updated")
+        self.assertFalse(row["eligible"])
+        self.assertEqual(row["record"],{"fields":{"new":True}})
+        self.assertEqual(row["download_mbps"],50.0)
+        self.assertEqual(row["state"],"verified")
+        self.assertEqual(self.app.mosaic_checked,{"2"})
+
+    def test_standalone_search_is_labeled_search_and_add(self):
+        self.assertEqual(self.app.mosaic_search_button.cget("text"),"Search & add")
+
     def test_independent_subscriber_code_search_builds_candidate(self):
         class FakeApi:
             async def search_subscriber(self, code):
@@ -225,12 +252,38 @@ class MosaicUiTests(unittest.TestCase):
 
     def test_speed_test_controls_use_clear_labels_without_confirmation_box(self):
         self.assertTrue(hasattr(self.app, "mosaic_search_entry"))
-        self.assertEqual(self.app.mosaic_search_button.cget("text"), "Search Mosaic")
+        self.assertEqual(self.app.mosaic_search_button.cget("text"), "Search & add")
         self.assertEqual(self.app.mosaic_reconcile_button.cget("text"), "Check uncertain tests")
         self.assertEqual(self.app.mosaic_tree.heading("state")["text"], "Test status")
         self.assertFalse(hasattr(self.app, "mosaic_confirmation"))
         import inspect
         self.assertNotIn("RUN SPEED TESTS", inspect.getsource(toolkit.App.run_selected_mosaic_tests))
+
+
+    def test_progress_queue_updates_row_message_and_overall_bar(self):
+        candidate={"key":"2","customer":"10014 Customer A","eligible":True,"state":"ready"}
+        self.app.mosaic_candidates=[candidate];self.app.mosaic_running=True;self.app.mosaic_progress.configure(maximum=2,value=0)
+        self.app.mosaic_progress_events.put({"key":"2","index":1,"total":2,"stage":"Waiting for router"})
+        with mock.patch.object(self.app,"after",return_value="after-id"):
+            self.app.drain_mosaic_progress()
+        self.assertEqual(candidate["state"],"Waiting for router")
+        self.assertIn("Customer 1 of 2",self.app.mosaic_action_status.get())
+        self.assertIn("Waiting for router",self.app.mosaic_action_status.get())
+        self.assertEqual(float(self.app.mosaic_progress["value"]),0.0)
+
+    def test_terminal_progress_applies_result_and_advances_bar(self):
+        candidate={"key":"2","customer":"10014 Customer A","eligible":True,"state":"ready","stale_pending":False}
+        self.app.mosaic_candidates=[candidate];self.app.mosaic_running=True;self.app.mosaic_progress.configure(maximum=2,value=0)
+        outcome={"state":"verified","metrics":{"download_mbps":50.0,"upload_mbps":10.0,"test_time_utc":"2026-08-21 01:00:00 UTC"},"cleanup":{"cleared":True}}
+        self.app.mosaic_progress_events.put({"key":"2","index":1,"total":2,"stage":"Verified","outcome":outcome})
+        with mock.patch.object(self.app,"after",return_value="after-id"):
+            self.app.drain_mosaic_progress()
+        self.assertEqual(candidate["state"],"verified")
+        self.assertEqual(candidate["download_mbps"],50.0)
+        self.assertEqual(float(self.app.mosaic_progress["value"]),1.0)
+
+    def test_speed_test_progress_bar_exists(self):
+        self.assertTrue(self.app.mosaic_progress.winfo_exists())
 
     def test_repeated_run_clicks_start_only_one_worker(self):
         self.app.mosaic_api = object()
@@ -242,11 +295,14 @@ class MosaicUiTests(unittest.TestCase):
             self.app.run_selected_mosaic_tests()
         self.assertEqual(background.call_count, 1)
         self.assertEqual(str(self.app.mosaic_run_button.cget("state")), "disabled")
+        self.app.mosaic_running = False
+        if self.app.mosaic_progress_after:
+            self.app.after_cancel(self.app.mosaic_progress_after);self.app.mosaic_progress_after=None
 
     def test_ui_passes_match_record_to_fresh_preflight(self):
         import inspect
         source = inspect.getsource(toolkit.App.run_selected_mosaic_tests)
-        self.assertIn("record=c['record']", source)
+        self.assertIn("record=candidate['record']", source)
 
     def test_mosaic_worker_does_not_call_tk_after_from_background_coroutine(self):
         import inspect

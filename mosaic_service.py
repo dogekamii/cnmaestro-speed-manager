@@ -505,8 +505,13 @@ class MosaicPortalClient:
             raise RuntimeError("Mosaic did not confirm completion of OoklaSpeedTest")
         return await self.wait_for_speed_result(device_id, previous_timestamp=previous.get("start_timestamp") if previous else None, poll_interval=0 if poll_interval == 0 else 3.0)
 
-async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJournal, subscriber_code: str, device_id: str, model: str, *, record: dict) -> dict:
-    """Run one Ookla action with fresh capability checks and durable outcome states."""
+async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJournal, subscriber_code: str, device_id: str, model: str, *, record: dict, progress=None) -> dict:
+    """Run one Ookla action with fresh checks, durable outcomes, and safe progress events."""
+    def emit(stage: str) -> None:
+        if progress:
+            try: progress(stage)
+            except Exception: pass
+    emit("Checking eligibility")
     try:
         records = await client.search_subscriber(subscriber_code)
         exact = {
@@ -516,59 +521,51 @@ async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJou
         }
         chosen = [item for (_, candidate_device), item in exact.items() if candidate_device == str(device_id)]
         if len(chosen) != 1:
+            emit("Ineligible")
             return {"entry_id": None, "state": "ineligible", "detail": "Selected Mosaic device is no longer an exact subscriber match"}
         current_record = chosen[0]
         bundle = await client.read_device(device_id)
-        eligibility = evaluate_eligibility(
-            current_record,
-            bundle["support"],
-            bundle["application_status"],
-            bundle["actions"],
-            data=bundle["data"],
-        )
+        eligibility = evaluate_eligibility(current_record, bundle["support"], bundle["application_status"], bundle["actions"], data=bundle["data"])
         if not eligibility.eligible:
+            emit("Ineligible")
             return {"entry_id": None, "state": "ineligible", "detail": eligibility.reason}
         previous = latest_speed_result(bundle["data"])
     except Exception as exc:
+        emit("Failed")
         return {"entry_id": None, "state": "failed", "detail": f"Mosaic preflight failed: {exc}"}
-    entry_id = journal.plan(
-        subscriber_code,
-        device_id,
-        model,
-        previous_timestamp=previous.get("start_timestamp") if previous else None,
-    )
+    emit("Preparing request")
+    entry_id = journal.plan(subscriber_code, device_id, model, previous_timestamp=previous.get("start_timestamp") if previous else None)
     journal.transition(entry_id, "submitting")
+    emit("Submitting to Mosaic")
     try:
         status_url = await client.start_ookla(device_id)
     except AmbiguousSubmissionError as exc:
-        journal.transition(entry_id, "unknown", detail=str(exc))
+        journal.transition(entry_id, "unknown", detail=str(exc));emit("Unknown")
         return {"entry_id": entry_id, "state": "unknown", "detail": str(exc)}
     except Exception as exc:
-        journal.transition(entry_id, "failed", detail=str(exc))
+        journal.transition(entry_id, "failed", detail=str(exc));emit("Failed")
         return {"entry_id": entry_id, "state": "failed", "detail": str(exc)}
     journal.transition(entry_id, "submitted", status_url=status_url)
+    emit("Waiting for router")
     try:
         status = await client.poll_action(status_url)
         if status.get("solicitStatus", {}).get("status") != "SUCCESS":
-            journal.transition(entry_id, "failed", detail="Mosaic could not contact the router")
+            journal.transition(entry_id, "failed", detail="Mosaic could not contact the router");emit("Failed")
             return {"entry_id": entry_id, "state": "failed", "detail": "Mosaic could not contact the router"}
         if not ookla_action_complete(status):
             raise RuntimeError("Mosaic did not confirm completion of OoklaSpeedTest")
-        metrics = await client.wait_for_speed_result(
-            device_id,
-            previous_timestamp=previous.get("start_timestamp") if previous else None,
-        )
+        emit("Waiting for result")
+        metrics = await client.wait_for_speed_result(device_id, previous_timestamp=previous.get("start_timestamp") if previous else None)
     except Exception as exc:
-        journal.transition(entry_id, "unknown", detail=str(exc))
+        journal.transition(entry_id, "unknown", detail=str(exc));emit("Unknown")
         return {"entry_id": entry_id, "state": "unknown", "detail": str(exc)}
-    cleanup = {"cleared": False}
-    cleanup_detail = ""
+    emit("Cleaning up")
+    cleanup = {"cleared": False};cleanup_detail = ""
     try:
         cleanup = await client.clear_terminal_ookla_pending(device_id, required=False)
     except Exception as exc:
-        cleanup = {"cleared": False, "unknown": True}
-        cleanup_detail = f"Result verified; stale-request cleanup needs review: {exc}"
-    journal.transition(entry_id, "verified", metrics=metrics, detail=cleanup_detail)
+        cleanup = {"cleared": False, "unknown": True};cleanup_detail = f"Result verified; stale-request cleanup needs review: {exc}"
+    journal.transition(entry_id, "verified", metrics=metrics, detail=cleanup_detail);emit("Verified")
     return {"entry_id": entry_id, "state": "verified", "metrics": metrics, "cleanup": cleanup}
 
 
