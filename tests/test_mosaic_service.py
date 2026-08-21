@@ -15,6 +15,7 @@ from mosaic_service import (
     evaluate_eligibility,
     execute_journaled_ookla,
     reconcile_journal_entry,
+    retryable_mosaic_outcome,
     latest_speed_result,
     match_subscriber,
     parse_customer_identity,
@@ -349,6 +350,7 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
             journal=MosaicJournal(Path(directory)/"mosaic.db");client=self.FakeClient("diagnostic")
             outcome=await execute_journaled_ookla(client,journal,"10014","2","SDG",record=self.managed_record())
             self.assertEqual(outcome["state"],"failed")
+            self.assertTrue(outcome["retryable"])
             self.assertIn("unable to retrieve your ip info",outcome["detail"])
             self.assertEqual(journal.get(outcome["entry_id"])["state"],"failed")
             journal.assert_can_start("2")
@@ -370,6 +372,17 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "unresolved"):
                 journal.assert_can_start("2")
 
+
+class RetryPolicyTests(unittest.TestCase):
+    def test_only_explicit_terminal_diagnostic_failure_is_retryable(self):
+        self.assertTrue(retryable_mosaic_outcome({"state":"failed","retryable":True,"detail":"Mosaic diagnostic failed: unable to retrieve your ip info"}))
+        for outcome in (
+            {"state":"unknown","retryable":True},
+            {"state":"failed","retryable":False},
+            {"state":"ineligible","retryable":True},
+            {"state":"verified","retryable":True},
+        ):
+            self.assertFalse(retryable_mosaic_outcome(outcome))
 
 class PortalClientTests(unittest.IsolatedAsyncioTestCase):
 

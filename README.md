@@ -9,6 +9,7 @@ Operations Toolkit 1.5.0 is a local candidate that preserves the working cnMaest
 - Search & add appends multiple subscribers into one selected bulk queue without replacing prior rows or results.
 - Shows live per-customer stages and an overall progress bar while sequential tests run.
 - Surfaces terminal Mosaic diagnostic errors as definite failures so retries unlock without mislabeling them as missing results.
+- Offers manual retry for selected retryable failures and optional 1-3 automatic retries; unknown, ambiguous, locked, pending, and unsupported outcomes are never automatically retried. Each retry waits five seconds, creates a separate journal attempt, and repeats full eligibility preflight.
 - Adds capability preflight and clearly marks unsupported routers such as SR905acv instead of offering a test action.
 - Adds an in-app handoff after successful cnMaestro upgrades; it never starts tests automatically.
 - Shows test date/time in UTC and supports clearing visible rows or exporting Excel-compatible CSV.

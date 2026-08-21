@@ -260,6 +260,41 @@ class MosaicUiTests(unittest.TestCase):
         self.assertNotIn("RUN SPEED TESTS", inspect.getsource(toolkit.App.run_selected_mosaic_tests))
 
 
+    def test_auto_retry_controls_are_bounded_and_off_by_default(self):
+        self.assertFalse(self.app.mosaic_auto_retry.get())
+        self.assertEqual(tuple(self.app.mosaic_retry_count.cget("values")), ("1", "2", "3"))
+        self.assertEqual(self.app.mosaic_retry_count.get(), "1")
+        self.assertEqual(self.app.mosaic_retry_failed_button.cget("text"), "Retry failed selected")
+
+    def test_auto_retry_retries_only_explicit_retryable_failure(self):
+        self.app.mosaic_api=object();candidate={"key":"2","device_id":"2","subscriber_code":"10014","model":"SDG","eligible":True,"record":{"fields":{}},"state":"ready","customer":"Customer A"};self.app.mosaic_candidates=[candidate];self.app.mosaic_checked={"2"};self.app.mosaic_auto_retry.set(True);self.app.mosaic_retry_count.set("2")
+        outcomes=[{"state":"failed","retryable":True,"detail":"Mosaic diagnostic failed"},{"state":"verified","metrics":{"download_mbps":50},"cleanup":{}}]
+        async def execute(*args,**kwargs):return outcomes.pop(0)
+        captured={}
+        def synchronous(coro,callback):captured["result"]=asyncio.run(coro);callback(captured["result"],None)
+        with mock.patch.object(toolkit,"execute_journaled_ookla",side_effect=execute) as run, mock.patch.object(toolkit.asyncio,"sleep",new=mock.AsyncMock()), mock.patch.object(self.app,"bg",side_effect=synchronous), mock.patch.object(self.app,"start_mosaic_progress_poll"):
+            self.app.run_selected_mosaic_tests()
+        self.assertEqual(run.call_count,2)
+        self.assertEqual(captured["result"][0][1]["attempts"],2)
+        self.assertEqual(captured["result"][0][1]["state"],"verified")
+
+    def test_auto_retry_never_retries_unknown_outcome(self):
+        self.app.mosaic_api=object();candidate={"key":"2","device_id":"2","subscriber_code":"10014","model":"SDG","eligible":True,"record":{"fields":{}},"state":"ready","customer":"Customer A"};self.app.mosaic_candidates=[candidate];self.app.mosaic_checked={"2"};self.app.mosaic_auto_retry.set(True);self.app.mosaic_retry_count.set("3")
+        async def execute(*args,**kwargs):return {"state":"unknown","retryable":False,"detail":"ambiguous PUT"}
+        captured={}
+        def synchronous(coro,callback):captured["result"]=asyncio.run(coro);callback(captured["result"],None)
+        with mock.patch.object(toolkit,"execute_journaled_ookla",side_effect=execute) as run, mock.patch.object(self.app,"bg",side_effect=synchronous), mock.patch.object(self.app,"start_mosaic_progress_poll"):
+            self.app.run_selected_mosaic_tests()
+        self.assertEqual(run.call_count,1)
+        self.assertEqual(captured["result"][0][1]["attempts"],1)
+
+    def test_retry_failed_selected_runs_only_retryable_failed_rows(self):
+        self.app.mosaic_api=object()
+        retryable={"key":"2","eligible":True,"state":"failed","retryable":True};ordinary={"key":"3","eligible":True,"state":"failed","retryable":False};self.app.mosaic_candidates=[retryable,ordinary];self.app.mosaic_checked={"2","3"}
+        with mock.patch.object(self.app,"start_mosaic_test_batch") as start:
+            self.app.retry_failed_mosaic_tests()
+        start.assert_called_once_with([retryable])
+
     def test_progress_queue_updates_row_message_and_overall_bar(self):
         candidate={"key":"2","customer":"10014 Customer A","eligible":True,"state":"ready"}
         self.app.mosaic_candidates=[candidate];self.app.mosaic_running=True;self.app.mosaic_progress.configure(maximum=2,value=0)
@@ -301,7 +336,7 @@ class MosaicUiTests(unittest.TestCase):
 
     def test_ui_passes_match_record_to_fresh_preflight(self):
         import inspect
-        source = inspect.getsource(toolkit.App.run_selected_mosaic_tests)
+        source = inspect.getsource(toolkit.App.start_mosaic_test_batch)
         self.assertIn("record=candidate['record']", source)
 
     def test_mosaic_worker_does_not_call_tk_after_from_background_coroutine(self):
@@ -333,6 +368,12 @@ class MosaicUiTests(unittest.TestCase):
             self.app.mosaic_back_button.winfo_rootx() + self.app.mosaic_back_button.winfo_width(),
             self.app.winfo_rootx() + self.app.winfo_width(),
         )
+
+    def test_minimum_size_keeps_retry_and_export_controls_visible(self):
+        self.app.deiconify();self.app.geometry("1120x700+0+0");self.app.show_page("mosaic_speed_test");self.app.update_idletasks();self.app.update()
+        right=self.app.winfo_rootx()+self.app.winfo_width()
+        for control in (self.app.mosaic_auto_retry_check,self.app.mosaic_retry_count,self.app.mosaic_retry_failed_button,self.app.mosaic_export_button):
+            self.assertLessEqual(control.winfo_rootx()+control.winfo_width(),right)
 
     def test_unsupported_candidate_displays_reason_and_cannot_be_selected(self):
         self.app.mosaic_candidates = [{

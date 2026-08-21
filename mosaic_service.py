@@ -49,6 +49,11 @@ class MosaicDiagnosticError(RuntimeError):
     """The router/Mosaic diagnostic reached a definite terminal error."""
 
 
+def retryable_mosaic_outcome(outcome: dict) -> bool:
+    """Allow retry only for a definite terminal failure explicitly marked safe."""
+    return outcome.get("state") == "failed" and outcome.get("retryable") is True
+
+
 def parse_customer_identity(value: str) -> CustomerIdentity | None:
     match = re.match(r"^\s*(\d{4,12})(?:\s+|[-_:]+)(.*?)\s*$", str(value or ""))
     if not match:
@@ -580,7 +585,7 @@ async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJou
         metrics = await client.wait_for_speed_result(device_id, previous_timestamp=previous.get("start_timestamp") if previous else None)
     except MosaicDiagnosticError as exc:
         journal.transition(entry_id, "failed", detail=str(exc));emit("Failed")
-        return {"entry_id": entry_id, "state": "failed", "detail": str(exc)}
+        return {"entry_id": entry_id, "state": "failed", "detail": str(exc), "retryable": True}
     except Exception as exc:
         journal.transition(entry_id, "unknown", detail=str(exc));emit("Unknown")
         return {"entry_id": entry_id, "state": "unknown", "detail": str(exc)}
