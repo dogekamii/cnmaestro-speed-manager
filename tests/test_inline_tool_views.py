@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
 import unittest
+from unittest import mock
 
 _TEST_DATA_ROOT = tempfile.mkdtemp()
 os.environ["LOCALAPPDATA"] = _TEST_DATA_ROOT
@@ -37,7 +38,7 @@ class InlineToolViewTests(unittest.TestCase):
 
     def assert_speed_manager_context_is_active(self):
         self.assertEqual(self.app.active_page, "speed_manager")
-        self.assertEqual(set(self.app.nav_items), {"overview", "speed_manager", "audit", "settings"})
+        self.assertEqual(set(self.app.nav_items), {"overview", "speed_manager", "mosaic_speed_test", "audit", "settings"})
         _, bar, _, _ = self.app.nav_items["speed_manager"]
         self.assertEqual(bar.cget("background"), self.app.colors["accent"])
 
@@ -45,7 +46,7 @@ class InlineToolViewTests(unittest.TestCase):
         self.assertEqual(
             [(service["label"], [(tool["key"], tool["label"]) for tool in service["tools"]])
              for service in self.app.service_navigation],
-            [("cnMaestro", [("speed_manager", "Speed Manager")])],
+            [("cnMaestro", [("speed_manager", "Speed Manager")]), ("Mosaic", [("mosaic_speed_test", "Speed Test")])],
         )
         _, _, _, overview = self.app.nav_items["overview"]
         _, _, _, audit = self.app.nav_items["audit"]
@@ -54,10 +55,10 @@ class InlineToolViewTests(unittest.TestCase):
                          ["Overview", "Audit Log", "Settings"])
 
     def test_navigation_labels_use_v120_text_size(self):
-        labels = [self.app.nav_items[key][3] for key in ("overview", "speed_manager", "audit", "settings")]
+        labels = [self.app.nav_items[key][3] for key in ("overview", "speed_manager", "mosaic_speed_test", "audit", "settings")]
         labels.append(self.app.service_navigation[0]["widgets"][2])
         sizes = [tkfont.Font(root=self.app, font=label.cget("font")).cget("size") for label in labels]
-        self.assertEqual(sizes, [11, 11, 11, 11, 11])
+        self.assertEqual(sizes, [11, 11, 11, 11, 11, 11])
 
     def test_nested_tool_label_fits_without_clipping(self):
         self.app.deiconify()
@@ -82,12 +83,12 @@ class InlineToolViewTests(unittest.TestCase):
         self.assertNotIn("scan_filters", self.app.pages)
         self.assertNotIn("preview_publish", self.app.pages)
         self.assertTrue(self.is_descendant(self.app.controls, self.app.pages["speed_manager"]))
-        self.assertTrue(self.is_descendant(self.app.preview_window, self.app.pages["speed_manager"]))
+        self.assertTrue(self.is_descendant(self.app.publish_panel, self.app.pages["speed_manager"]))
         self.assertTrue(self.app.controls.winfo_ismapped())
-        self.assertTrue(self.app.preview_window.winfo_ismapped())
+        self.assertTrue(self.app.publish_panel.winfo_ismapped())
         self.assertTrue(self.app.tree.winfo_ismapped())
         self.assertFalse(hasattr(self.app, "metric_vars"))
-        publish_bottom = self.app.preview_window.winfo_rooty() + self.app.preview_window.winfo_height()
+        publish_bottom = self.app.publish_panel.winfo_rooty() + self.app.publish_panel.winfo_height()
         content_bottom = self.app.content.winfo_rooty() + self.app.content.winfo_height()
         self.assertLessEqual(publish_bottom, content_bottom)
         self.assertGreater(self.app.tree.winfo_height(), 80)
@@ -96,7 +97,7 @@ class InlineToolViewTests(unittest.TestCase):
         action_windows = [child for child in self.app.winfo_children() if isinstance(child, tk.Toplevel)]
         self.assertEqual(action_windows, [])
         self.assertNotIsInstance(self.app.controls, tk.Toplevel)
-        self.assertNotIsInstance(self.app.preview_window, tk.Toplevel)
+        self.assertFalse(getattr(self.app, "preview_window", None))
 
     def test_open_controls_keeps_integrated_speed_manager_workspace(self):
         self.app.deiconify()
@@ -107,7 +108,7 @@ class InlineToolViewTests(unittest.TestCase):
         self.assertTrue(self.app.controls.winfo_ismapped())
         self.assert_speed_manager_context_is_active()
 
-    def test_valid_preview_stays_in_integrated_publish_section(self):
+    def test_valid_preview_opens_structured_popout_window(self):
         self.app.rows = {
             "AA:BB:CC:DD:EE:FF": {
                 "name": "Test SM", "mac": "AA:BB:CC:DD:EE:FF", "package": "25 Mbps",
@@ -118,6 +119,8 @@ class InlineToolViewTests(unittest.TestCase):
         }
         self.app.checked = {"AA:BB:CC:DD:EE:FF"}
         self.app.target.set("50 Mbps")
+        self.app.api = object()
+        self.app.api = object()
         self.app.deiconify()
 
         self.app.preview_changes()
@@ -125,9 +128,54 @@ class InlineToolViewTests(unittest.TestCase):
 
         self.assertEqual(len(self.app.preview), 1)
         self.assertTrue(self.app.pages["speed_manager"].winfo_ismapped())
+        self.assertIsInstance(self.app.preview_window, tk.Toplevel)
         self.assertTrue(self.app.preview_window.winfo_ismapped())
-        self.assertIn('"target_package": "50 Mbps"', self.app.out.get("1.0", "end"))
+        self.assertEqual(len(self.app.preview_tree.get_children()), 1)
+        values = self.app.preview_tree.item(self.app.preview_tree.get_children()[0], "values")
+        self.assertEqual(values[0], "Test SM")
+        self.assertEqual(values[3], "50 Mbps")
+        self.assertFalse(self.app.out.winfo_ismapped())
         self.assert_speed_manager_context_is_active()
+
+
+    def test_preview_without_cnmaestro_connection_notifies_user(self):
+        self.app.api = None
+        with mock.patch.object(toolkit.messagebox, "showerror") as error:
+            self.app.preview_changes()
+        error.assert_called_once()
+        self.assertIn("Connect", error.call_args.args[0])
+        self.assertFalse(getattr(self.app, "preview_window", None))
+
+
+    def widget_texts(self, root):
+        values = []
+        for widget in root.winfo_children():
+            if "text" in widget.keys(): values.append(str(widget.cget("text")))
+            values.extend(self.widget_texts(widget))
+        return values
+
+    def test_speed_manager_removes_confirmation_and_update_controls(self):
+        publish_text = self.widget_texts(self.app.publish_panel)
+        settings_text = self.widget_texts(self.app.pages["settings"])
+        self.assertNotIn("Confirmation", publish_text)
+        self.assertNotIn("Check updates", publish_text)
+        self.assertIn("Check for updates", settings_text)
+
+    def test_publish_without_connection_notifies_and_does_not_execute(self):
+        self.app.api = None
+        with mock.patch.object(toolkit.messagebox, "showerror") as error, mock.patch.object(self.app, "execute") as execute:
+            self.app.publish_from_ui()
+        error.assert_called_once()
+        self.assertIn("Connect", error.call_args.args[0])
+        execute.assert_not_called()
+
+    def test_publish_wrapper_satisfies_hidden_internal_confirmation(self):
+        self.app.api = object()
+        observed = []
+        with mock.patch.object(self.app, "execute", side_effect=lambda: observed.append(self.app.confirm.get())):
+            self.app.publish_from_ui()
+        self.assertEqual(observed, [toolkit.PHRASE])
+        self.assertEqual(self.app.confirm.get(), "")
 
     def test_sidebar_audit_log_opens_embedded_table_with_export_hook(self):
         with sqlite3.connect(toolkit.DB) as connection:
