@@ -1,5 +1,5 @@
 {
-  "version": "1.4.0",
-  "download_url": "https://github.com/dogekamii/Operations-Toolkit/releases/download/v1.4.0/Operations-Toolkit-v1.4.0.exe",
-  "notes": "Adds opt-in, per-user remembered cnMaestro credentials using Windows Credential Manager, with no auto-connect and an in-app Forget action."
+  "version": "1.5.0",
+  "download_url": "https://github.com/dogekamii/Operations-Toolkit/releases/download/v1.5.0/Operations-Toolkit-v1.5.0.exe",
+  "notes": "Adds safe Mosaic Ookla testing with bulk queues, detailed progress, recovery controls, terminal-error reporting, and bounded opt-in retries."
 }
