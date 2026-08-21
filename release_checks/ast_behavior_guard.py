@@ -1,4 +1,4 @@
-"""Verify the v1.4 source preserves the original v1.1 behavior AST."""
+"""Verify the v1.5 source preserves the original v1.1 behavior AST."""
 from __future__ import annotations
 
 import ast
@@ -17,7 +17,7 @@ CORE_APP_METHODS = (
     # App.audit now performs visual in-app navigation; its unchanged query/table data
     # behavior is covered by tests/test_inline_tool_views.py.
     # check_updates intentionally differs and is covered by tests/test_updater.py.
-    # connect and credential/settings methods intentionally differ for v1.4.0 and
+    # connect and credential/settings methods intentionally differ for v1.4.0/v1.5.0 and
     # are covered by tests/test_credentials.py.
     "vt", "update_result",
 )

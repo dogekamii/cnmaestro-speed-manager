@@ -1,13 +1,16 @@
-# Operations Toolkit 1.4.0
+# Operations Toolkit 1.5.0
 
-Operations Toolkit includes the working cnMaestro Speed Manager with compact service/tool navigation. Version 1.4.0 retains the dense v1.2.0-style workspace while keeping the current nested service navigation and cnMaestro behavior.
+Operations Toolkit 1.5.0 is a local candidate that preserves the working cnMaestro Speed Manager and adds a separate Mosaic Speed Test module with an explicit post-upgrade handoff.
 
-## What changed in 1.4.0
+## What changed in 1.5.0
 
-- Added an opt-in **Remember credentials** checkbox to the compact cnMaestro authentication area.
-- Remembered Client Secrets are stored per Windows user in Windows Credential Manager; they are never written to the settings file. The Client ID and remember state are stored in `%LOCALAPPDATA%\cnMaestroSpeedManager\settings.json` only after successful authentication.
-- Remembered credentials fill the masked fields at startup but never auto-connect. Use **Settings > Forget saved credentials** to remove the saved secret and clear the remembered Client ID/state.
-- Retained the dense v1.2.0-style workspace, nested cnMaestro > Speed Manager navigation, updater, safety controls, and existing cnMaestro endpoint and operational behavior.
+- Added nested **Mosaic > Speed Test** in-app navigation using the existing dense dark workspace.
+- Matches cnMaestro customers to Mosaic by an exact leading subscriber code; normalized customer names are confidence checks only. Missing, duplicate, and multi-device matches remain operator-review states.
+- Adds capability preflight and clearly marks unsupported routers such as SR905acv instead of offering a test action.
+- Adds an in-app handoff after successful cnMaestro upgrades; it never starts tests automatically.
+- Runs explicitly selected supported Ookla tests sequentially, with a durable local journal and unknown-outcome reconciliation.
+- Mosaic passwords are optionally stored per Windows user in Windows Credential Manager, never plaintext, and never auto-connect.
+- Preserves the cnMaestro API and guarded operational behavior from previous releases.
 
 Older releases remain available in GitHub release history.
 
@@ -21,7 +24,7 @@ Older releases remain available in GitHub release history.
 
 ## Run from source
 
-On Windows, run **Launch Operations Toolkit.bat**. Expand **cnMaestro** and select **Speed Manager**. Keep write actions disabled during validation.
+On Windows, run **Launch Operations Toolkit.bat**. Expand **cnMaestro** for Speed Manager or **Mosaic** for Speed Test. Keep remote actions disabled during validation.
 
 The pinned dependencies are listed in `requirements.txt`; `keyring` uses the current Windows user's Credential Manager on Windows.
 
@@ -36,10 +39,10 @@ To override the manifest URL, place a valid `update_config.json` beside the exec
 Run `build_windows.bat`, or use the equivalent command after installing `requirements.txt`:
 
 ```powershell
-pyinstaller --noconfirm --clean --onefile --windowed --hidden-import keyring.backends.Windows --name "Operations-Toolkit-v1.4.0" cnmaestro_speed_manager.py
+pyinstaller --noconfirm --clean --onefile --windowed --hidden-import keyring.backends.Windows --name "Operations-Toolkit-v1.5.0" cnmaestro_speed_manager.py
 ```
 
-The executable is written to `dist\Operations-Toolkit-v1.4.0.exe`.
+The executable is written to `dist\Operations-Toolkit-v1.5.0.exe`.
 
 ## Regression guard
 
@@ -50,6 +53,10 @@ The executable is written to `dist\Operations-Toolkit-v1.4.0.exe`.
 ![Operations Toolkit dense Speed Manager workspace](screenshots/operations-toolkit-v1.3.0-speed-manager-1280x760.png)
 
 ![Operations Toolkit in-app Audit Log](screenshots/operations-toolkit-v1.3.0-audit-log-1280x760.png)
+
+![Operations Toolkit Mosaic Speed Test](screenshots/operations-toolkit-v1.5.0-mosaic-1280x760.png)
+
+![Operations Toolkit post-upgrade speed-test handoff](screenshots/operations-toolkit-v1.5.0-post-upgrade-1280x760.png)
 
 ## Approximate matching safety
 

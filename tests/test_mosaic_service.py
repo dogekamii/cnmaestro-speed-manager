@@ -1,0 +1,290 @@
+import json
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import httpx
+
+from mosaic_service import (
+    AmbiguousSubmissionError,
+    MosaicJournal,
+    MosaicPortalClient,
+    evaluate_eligibility,
+    execute_journaled_ookla,
+    latest_speed_result,
+    match_subscriber,
+    parse_customer_identity,
+)
+
+
+class IdentityAndMatchingTests(unittest.TestCase):
+    def test_parses_only_leading_numeric_subscriber_code(self):
+        identity = parse_customer_identity("  10014 Johnson Harriet ")
+        self.assertEqual(identity.subscriber_code, "10014")
+        self.assertEqual(identity.customer_name, "Johnson Harriet")
+        self.assertIsNone(parse_customer_identity("Johnson 10014 Harriet"))
+        self.assertIsNone(parse_customer_identity("Johnson Harriet"))
+
+    def test_exact_code_is_authoritative_and_name_is_only_confidence_check(self):
+        record = {"fields": {"subscriberCode": "10014", "fullName": "Harriet Johnson", "subscriberId": "1", "deviceId": "2", "disposition": "MANAGED_DEVICE"}}
+        result = match_subscriber("10014 Johnson Harriet", [record])
+        self.assertEqual(result.status, "matched")
+        self.assertEqual(result.subscriber_code, "10014")
+        self.assertEqual(result.confidence, "code_only")
+        self.assertIs(result.record, record)
+
+        exact_name = {"fields": {**record["fields"], "fullName": "Johnson Harriet"}}
+        result = match_subscriber("10014 Johnson Harriet", [exact_name])
+        self.assertEqual(result.confidence, "code_and_name")
+
+    def test_missing_duplicate_and_multi_device_matches_require_review(self):
+        self.assertEqual(match_subscriber("No numeric code", []).status, "missing_code")
+        self.assertEqual(match_subscriber("10014 Customer", []).status, "not_found")
+        duplicate = [
+            {"fields": {"subscriberCode": "10014", "subscriberId": "1", "deviceId": "2"}},
+            {"fields": {"subscriberCode": "10014", "subscriberId": "1", "deviceId": "3"}},
+        ]
+        self.assertEqual(match_subscriber("10014 Customer", duplicate).status, "multiple_devices")
+
+
+class EligibilityTests(unittest.TestCase):
+    def eligible_inputs(self):
+        now = datetime.now(timezone.utc)
+        record = {"fields": {"subscriberCode": "10014", "deviceId": "2", "subscriberId": "1", "model": "SDG-8734v", "disposition": "MANAGED_DEVICE", "lastInform": now.isoformat()}}
+        support = {"applications": {"OoklaSpeedTest": {"supported": True, "driver": {"ref": "driver"}}}}
+        status = {"applications": {"OoklaSpeedTest": {"state": "OK", "messages": []}}}
+        actions = {"applications": {"OoklaSpeedTest": {"pendingSync": False}}}
+        return record, support, status, actions, now
+
+    def test_eligible_requires_full_preflight_not_support_flag_alone(self):
+        record, support, status, actions, now = self.eligible_inputs()
+        result = evaluate_eligibility(record, support, status, actions, now=now)
+        self.assertTrue(result.eligible)
+        self.assertEqual(result.reason, "Ready")
+
+        support["applications"]["OoklaSpeedTest"]["driver"] = None
+        self.assertEqual(evaluate_eligibility(record, support, status, actions, now=now).reason, "Ookla driver unavailable")
+
+    def test_unsupported_nodriver_pending_stale_and_sr905_are_ineligible(self):
+        record, support, status, actions, now = self.eligible_inputs()
+        support["applications"]["OoklaSpeedTest"]["supported"] = False
+        self.assertEqual(evaluate_eligibility(record, support, status, actions, now=now).reason, "Ookla not supported")
+        support["applications"]["OoklaSpeedTest"]["supported"] = True
+        missing_status = {"applications": {}}
+        self.assertEqual(evaluate_eligibility(record, support, missing_status, actions, now=now).reason, "Ookla application status unavailable")
+        missing_action = {"applications": {}}
+        self.assertEqual(evaluate_eligibility(record, support, status, missing_action, now=now).reason, "Ookla action unavailable")
+        status["applications"]["OoklaSpeedTest"]["state"] = "NODRIVER"
+        self.assertIn("NODRIVER", evaluate_eligibility(record, support, status, actions, now=now).reason)
+        status["applications"]["OoklaSpeedTest"]["state"] = "OK"
+        actions["applications"]["Other"] = {"pendingSync": True}
+        self.assertEqual(evaluate_eligibility(record, support, status, actions, now=now).reason, "Another Mosaic action is pending")
+        actions["applications"].pop("Other")
+        record["fields"]["lastInform"] = (now - timedelta(days=2)).isoformat()
+        self.assertEqual(evaluate_eligibility(record, support, status, actions, now=now).reason, "Device has not informed recently")
+        record["fields"]["lastInform"] = now.isoformat()
+        record["fields"]["model"] = "C0 - SR905acv"
+        self.assertIn("SR905", evaluate_eligibility(record, support, status, actions, now=now).reason)
+
+
+class ResultTests(unittest.TestCase):
+    def test_latest_result_uses_timestamp_and_redacts_host_and_client_ip(self):
+        data = {"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"Results": {
+            "z": {"StartTimeStamp": "100", "DownloadSpeed": "1000000", "UploadSpeed": "500000", "Host": "private", "ClientIP": "192.0.2.1"},
+            "a": {"StartTimeStamp": "200", "DownloadSpeed": "50000000", "UploadSpeed": "10000000", "PingLatency": "12", "PingJitter": "3", "ISP": "Example", "Host": "private2", "ClientIP": "192.0.2.2"},
+        }}}}}}}
+        result = latest_speed_result(data)
+        self.assertEqual(result["start_timestamp"], "200")
+        self.assertEqual(result["download_mbps"], 50.0)
+        self.assertEqual(result["upload_mbps"], 10.0)
+        self.assertEqual(result["latency_ms"], 12.0)
+        self.assertEqual(result["jitter_ms"], 3.0)
+        self.assertNotIn("Host", json.dumps(result))
+        self.assertNotIn("ClientIP", json.dumps(result))
+        self.assertNotIn("192.0.2", json.dumps(result))
+
+
+class JournalTests(unittest.TestCase):
+    def test_unknown_outcome_blocks_retry_until_reconciled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            entry = journal.plan("10014", "2", "SDG-8734v", previous_timestamp="100")
+            self.assertEqual(journal.get(entry)["previous_timestamp"], "100")
+            with self.assertRaisesRegex(RuntimeError, "unresolved"):
+                journal.assert_can_start("2")
+            journal.transition(entry, "submitting")
+            with self.assertRaisesRegex(RuntimeError, "unresolved"):
+                journal.assert_can_start("2")
+            journal.transition(entry, "submitted")
+            with self.assertRaisesRegex(RuntimeError, "unresolved"):
+                journal.assert_can_start("2")
+            journal.transition(entry, "unknown", detail="timeout")
+            with self.assertRaisesRegex(RuntimeError, "unresolved"):
+                journal.assert_can_start("2")
+            journal.transition(entry, "verified")
+            journal.assert_can_start("2")
+            row = journal.get(entry)
+            self.assertNotIn("token", json.dumps(row).lower())
+            self.assertNotIn("password", json.dumps(row).lower())
+
+
+
+
+class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
+    class FakeClient:
+        def __init__(self, failure=None):
+            self.failure = failure
+            self.puts = 0
+        async def latest_result(self, device_id): return None
+        async def start_ookla(self, device_id):
+            self.puts += 1
+            if self.failure == "before": raise ValueError("definite rejection")
+            return "https://mosaic.example/prime-home/api/v1/action-status/1"
+        async def poll_action(self, status_url):
+            if self.failure == "after": raise TimeoutError("ambiguous poll")
+            return {"completed": True, "solicitStatus": {"status": "SUCCESS"}, "syncApplications": [{"appCode": "OoklaSpeedTest", "complete": True}]}
+        async def wait_for_speed_result(self, device_id, previous_timestamp):
+            return {"start_timestamp": "200", "download_mbps": 50.0, "upload_mbps": 10.0, "latency_ms": 12.0, "jitter_ms": 3.0}
+
+    async def test_success_is_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            client = self.FakeClient()
+            outcome = await execute_journaled_ookla(client, journal, "10014", "2", "SDG")
+            self.assertEqual(outcome["state"], "verified")
+            self.assertEqual(journal.get(outcome["entry_id"])["state"], "verified")
+            self.assertEqual(client.puts, 1)
+
+    async def test_definite_pre_submit_failure_is_failed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            outcome = await execute_journaled_ookla(self.FakeClient("before"), journal, "10014", "2", "SDG")
+            self.assertEqual(outcome["state"], "failed")
+
+
+    async def test_completed_status_requires_ookla_application_complete(self):
+        class IncompleteClient(self.FakeClient):
+            async def poll_action(self, status_url):
+                return {"completed": True, "solicitStatus": {"status": "SUCCESS"}, "syncApplications": [{"appCode": "OoklaSpeedTest", "complete": False}]}
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            outcome = await execute_journaled_ookla(IncompleteClient(), journal, "10014", "2", "SDG")
+            self.assertEqual(outcome["state"], "unknown")
+            self.assertIn("did not confirm completion", outcome["detail"])
+
+    async def test_post_submit_timeout_is_unknown_and_blocks_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            client = self.FakeClient("after")
+            outcome = await execute_journaled_ookla(client, journal, "10014", "2", "SDG")
+            self.assertEqual(outcome["state"], "unknown")
+            self.assertEqual(client.puts, 1)
+            with self.assertRaisesRegex(RuntimeError, "unresolved"):
+                journal.assert_can_start("2")
+
+
+class PortalClientTests(unittest.IsolatedAsyncioTestCase):
+
+    def test_clear_session_removes_tokens_and_in_memory_password(self):
+        client = MosaicPortalClient("https://mosaic.example", "user", "memory-password", transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+        client.set_session_for_test("session", "xsrf")
+        client.clear_session()
+        self.assertIsNone(client.session_id)
+        self.assertIsNone(client.xsrf_token)
+        self.assertEqual(client.password, "")
+    async def test_login_search_and_device_read_contract(self):
+        seen = []
+        def handler(request):
+            seen.append(request)
+            if request.url.path == "/prime-home/":
+                return httpx.Response(200, text='<input name="loginPanel:ipAddress" value="10.10.19.115"/>')
+            if request.url.path == "/prime-home/api/v1/sessions/portal":
+                body = json.loads(request.content)
+                self.assertEqual(body, {"username": "user", "password": "pass", "lastIpAddress": "10.10.19.115"})
+                return httpx.Response(200, json={"sessionId": "session", "xsrfToken": "xsrf", "passphraseExpired": False})
+            self.assertEqual(request.headers["X-XsrfSessionHeader"], "xsrf")
+            self.assertIn("CASESSIONID=session", request.headers["Cookie"])
+            if request.url.path == "/prime-home/portal/query/execute":
+                self.assertEqual(request.content.decode(), 'subscription with "10014" sort disposition desc lastInform desc')
+                return httpx.Response(200, json=[{"fields": {"subscriberCode": "10014", "deviceId": "2"}}])
+            if request.url.path.endswith("/support"):
+                return httpx.Response(200, json={"applications": {}})
+            if request.url.path.endswith("/actions"):
+                return httpx.Response(200, json={"applications": {}})
+            if request.url.path.endswith("/applicationStatus"):
+                return httpx.Response(200, json={"applications": {}})
+            if request.url.path.endswith("/data"):
+                return httpx.Response(200, json={"deviceId": 2})
+            raise AssertionError(str(request.url))
+        client = MosaicPortalClient("https://mosaic.example", "user", "pass", transport=httpx.MockTransport(handler))
+        await client.login()
+        records = await client.search_subscriber("10014")
+        bundle = await client.read_device("2")
+        self.assertEqual(records[0]["fields"]["deviceId"], "2")
+        self.assertEqual(bundle["data"]["deviceId"], 2)
+        self.assertGreaterEqual(len(seen), 6)
+
+    async def test_save_contract_puts_full_actions_once_and_returns_safe_result(self):
+        puts = []
+        data_reads = 0
+        actions = {"revision": 7, "applications": {"OoklaSpeedTest": {"pendingSync": False, "dataOwner": "SERVER"}, "Other": {"pendingSync": False}}}
+        def handler(request):
+            nonlocal data_reads
+            if request.url.path.endswith("/actions") and request.method == "GET":
+                return httpx.Response(200, json=actions)
+            if request.url.path.endswith("/actions") and request.method == "PUT":
+                puts.append(json.loads(request.content))
+                return httpx.Response(200, headers={"Action-Status": "/prime-home/api/v1/action-status/abc"}, json={})
+            if request.url.path.endswith("/action-status/abc"):
+                return httpx.Response(200, json={"completed": True, "solicitStatus": {"status": "SUCCESS"}, "syncApplications": [{"appCode": "OoklaSpeedTest", "complete": True}]})
+            if request.url.path.endswith("/data"):
+                data_reads += 1
+                if data_reads == 1:
+                    return httpx.Response(200, json={"applications": {}})
+                return httpx.Response(200, json={"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"Results": {"1": {"StartTimeStamp": "200", "DownloadSpeed": "25000000", "UploadSpeed": "5000000", "Host": "redact", "ClientIP": "192.0.2.3"}}}}}}}})
+            raise AssertionError(str(request.url))
+        client = MosaicPortalClient("https://mosaic.example", "user", "pass", transport=httpx.MockTransport(handler))
+        client.set_session_for_test("session", "xsrf")
+        result = await client.run_ookla("2", poll_interval=0, max_polls=2)
+        self.assertEqual(len(puts), 1)
+        self.assertEqual(puts[0]["revision"], 7)
+        self.assertTrue(puts[0]["applications"]["OoklaSpeedTest"]["pendingSync"])
+        self.assertTrue(puts[0]["solicit"])
+        self.assertFalse(puts[0]["applications"]["Other"]["pendingSync"])
+        self.assertEqual(result["download_mbps"], 25.0)
+        self.assertNotIn("redact", json.dumps(result))
+
+
+    async def test_wait_for_result_rejects_stale_result_until_timestamp_changes(self):
+        reads = 0
+        def handler(request):
+            nonlocal reads
+            if request.url.path.endswith("/data"):
+                reads += 1
+                stamp = "100" if reads < 3 else "200"
+                return httpx.Response(200, json={"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"Results": {"1": {"StartTimeStamp": stamp, "DownloadSpeed": "1000000"}}}}}}}})
+            raise AssertionError(str(request.url))
+        client = MosaicPortalClient("https://mosaic.example", "user", "pass", transport=httpx.MockTransport(handler))
+        client.set_session_for_test("session", "xsrf")
+        result = await client.wait_for_speed_result("2", previous_timestamp="100", poll_interval=0, max_polls=3)
+        self.assertEqual(result["start_timestamp"], "200")
+        self.assertEqual(reads, 3)
+
+    async def test_ambiguous_put_is_not_retried(self):
+        count = 0
+        def handler(request):
+            nonlocal count
+            if request.method == "GET":
+                return httpx.Response(200, json={"applications": {"OoklaSpeedTest": {"pendingSync": False}}})
+            count += 1
+            raise httpx.ReadTimeout("ambiguous", request=request)
+        client = MosaicPortalClient("https://mosaic.example", "user", "pass", transport=httpx.MockTransport(handler))
+        client.set_session_for_test("session", "xsrf")
+        with self.assertRaises(AmbiguousSubmissionError):
+            await client.start_ookla("2")
+        self.assertEqual(count, 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
