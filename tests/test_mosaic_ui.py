@@ -114,6 +114,47 @@ class MosaicUiTests(unittest.TestCase):
         self.assertEqual(self.app.mosaic_export_button.cget("text"), "Export CSV")
 
 
+
+    def test_terminal_stale_candidate_is_labeled_for_explicit_cleanup(self):
+        class FakeApi:
+            async def read_device(self, device_id):
+                return {
+                    "support": {"applications": {"OoklaSpeedTest": {"supported": True, "driver": {"ref": "driver"}}}},
+                    "application_status": {"applications": {"OoklaSpeedTest": {"state": "OK"}}},
+                    "actions": {"applications": {"OoklaSpeedTest": {"pendingSync": True}}},
+                    "data": {"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"State": "Complete", "ExpectingResults": "false", "Results": {"1": {"Status": "Complete", "StartTimeStamp": "200"}}}}}}}},
+                }
+        self.app.mosaic_api = FakeApi()
+        record = {"fields": {"subscriberCode": "10014", "subscriberId": "1", "deviceId": "2", "model": "ADTRAN", "fullName": "Test", "disposition": "MANAGED_DEVICE", "lastInform": "2099-01-01T00:00:00+00:00"}}
+        rows = asyncio.run(self.app.mosaic_candidates_for_records({"name": "10014 Test"}, 0, [record]))
+        self.assertTrue(rows[0]["stale_pending"])
+        self.assertFalse(rows[0]["eligible"])
+        self.assertIn("Stale Ookla request", rows[0]["eligibility"])
+
+    def test_guarded_clear_stale_request_refreshes_candidate_to_ready(self):
+        class FakeApi:
+            def __init__(self): self.clears = 0
+            async def clear_terminal_ookla_pending(self, device_id, *, required=False): self.clears += 1; return {"cleared": True}
+            async def read_device(self, device_id):
+                return {"support": {"applications": {"OoklaSpeedTest": {"supported": True, "driver": {"ref": "driver"}}}}, "application_status": {"applications": {"OoklaSpeedTest": {"state": "OK"}}}, "actions": {"applications": {"OoklaSpeedTest": {"pendingSync": False}}}, "data": {}}
+        api = FakeApi();self.app.mosaic_api = api
+        record = {"fields": {"subscriberCode": "10014", "subscriberId": "1", "deviceId": "2", "model": "ADTRAN", "fullName": "Test", "disposition": "MANAGED_DEVICE", "lastInform": "2099-01-01T00:00:00+00:00"}}
+        self.app.mosaic_candidates = [{"key": "2", "device_id": "2", "record": record, "stale_pending": True, "eligible": False, "eligibility": "Stale Ookla request", "state": "review"}]
+        self.app.mosaic_checked = {"2"}
+        def immediate(coroutine, callback):
+            try: callback(asyncio.run(coroutine), None)
+            except Exception as exc: callback(None, exc)
+        with mock.patch.object(toolkit.messagebox, "askyesno", return_value=True), mock.patch.object(self.app, "bg", side_effect=immediate):
+            self.app.clear_selected_stale_request()
+        self.assertEqual(api.clears, 1)
+        self.assertFalse(self.app.mosaic_candidates[0]["stale_pending"])
+        self.assertTrue(self.app.mosaic_candidates[0]["eligible"])
+        self.assertEqual(self.app.mosaic_candidates[0]["state"], "ready")
+        self.assertEqual(self.app.mosaic_candidates[0]["eligibility"], "Ready")
+
+    def test_stale_clear_control_exists(self):
+        self.assertEqual(self.app.mosaic_clear_stale_button.cget("text"), "Clear stale request")
+
     def test_mosaic_actions_without_connection_notify_user(self):
         self.app.mosaic_api = None
         self.app.mosaic_search_code.set("10014")

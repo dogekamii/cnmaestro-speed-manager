@@ -38,6 +38,7 @@ class MatchResult:
 class EligibilityResult:
     eligible: bool
     reason: str
+    stale_pending: bool = False
 
 
 class AmbiguousSubmissionError(RuntimeError):
@@ -96,7 +97,24 @@ def _parse_timestamp(value) -> datetime | None:
         return None
 
 
-def evaluate_eligibility(record: dict, support: dict, application_status: dict, actions: dict, *, now: datetime | None = None) -> EligibilityResult:
+def terminal_stale_ookla(actions: dict, data: dict, application_status: dict) -> bool:
+    applications = actions.get("applications", {}) if isinstance(actions, dict) else {}
+    pending = [name for name, action in applications.items() if isinstance(action, dict) and _bool(action.get("pendingSync"))]
+    if pending != ["OoklaSpeedTest"]:
+        return False
+    try:
+        value = data["applications"]["OoklaSpeedTest"]["dto"]["Settings"]["OoklaSpeedTest"]
+    except (KeyError, TypeError):
+        return False
+    state = str(value.get("State") or "").casefold()
+    expecting = _bool(value.get("ExpectingResults"))
+    app_state = str(application_status.get("applications", {}).get("OoklaSpeedTest", {}).get("state") or "").casefold()
+    latest = latest_speed_result(data)
+    result_complete = bool(latest and str(latest.get("status") or "").casefold() == "complete")
+    return state == "complete" and not expecting and app_state in {"ok", "complete", "completed"} and result_complete
+
+
+def evaluate_eligibility(record: dict, support: dict, application_status: dict, actions: dict, *, data: dict | None = None, now: datetime | None = None) -> EligibilityResult:
     fields = record.get("fields", {}) if isinstance(record, dict) else {}
     model = str(fields.get("model") or "")
     if "sr905" in model.casefold():
@@ -122,6 +140,8 @@ def evaluate_eligibility(record: dict, support: dict, application_status: dict, 
         return EligibilityResult(False, "Ookla application status is NODRIVER")
     if app_state and app_state.casefold() not in {"ok", "complete", "completed"}:
         return EligibilityResult(False, f"Ookla application status is {app_state}")
+    if data is not None and terminal_stale_ookla(actions, data, application_status):
+        return EligibilityResult(False, "Stale Ookla request — select this row and clear it", True)
     for action in (actions.get("applications", {}) if isinstance(actions, dict) else {}).values():
         if isinstance(action, dict) and _bool(action.get("pendingSync")):
             return EligibilityResult(False, "Another Mosaic action is pending")
@@ -382,6 +402,27 @@ class MosaicPortalClient:
         data = (await self._request("GET", prefix + "/data")).json()
         return {"support": support, "actions": actions, "application_status": status, "data": data}
 
+    async def clear_terminal_ookla_pending(self, device_id: str, *, required: bool = False) -> dict:
+        bundle = await self.read_device(str(device_id))
+        if not terminal_stale_ookla(bundle["actions"], bundle["data"], bundle["application_status"]):
+            if required:
+                raise RuntimeError("The selected Ookla request is not stale")
+            return {"cleared": False, "reason": "not-stale"}
+        payload = deepcopy(bundle["actions"])
+        payload["applications"]["OoklaSpeedTest"]["pendingSync"] = False
+        try:
+            await self._request("PUT", f"/prime-home/api/v1/devices/{device_id}/actions", headers={"Content-Type": "application/json"}, json=payload)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code >= 500:
+                raise AmbiguousSubmissionError("Mosaic stale-request cleanup outcome is unknown") from exc
+            raise
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise AmbiguousSubmissionError("Mosaic stale-request cleanup outcome is unknown") from exc
+        after = (await self._request("GET", f"/prime-home/api/v1/devices/{device_id}/actions")).json()
+        if _bool(after.get("applications", {}).get("OoklaSpeedTest", {}).get("pendingSync")):
+            raise AmbiguousSubmissionError("Mosaic did not verify stale-request cleanup")
+        return {"cleared": True}
+
     async def start_ookla(self, device_id: str) -> str:
         prefix = f"/prime-home/api/v1/devices/{device_id}"
         actions = (await self._request("GET", prefix + "/actions")).json()
@@ -472,6 +513,7 @@ async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJou
             bundle["support"],
             bundle["application_status"],
             bundle["actions"],
+            data=bundle["data"],
         )
         if not eligibility.eligible:
             return {"entry_id": None, "state": "ineligible", "detail": eligibility.reason}
@@ -508,8 +550,15 @@ async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJou
     except Exception as exc:
         journal.transition(entry_id, "unknown", detail=str(exc))
         return {"entry_id": entry_id, "state": "unknown", "detail": str(exc)}
-    journal.transition(entry_id, "verified", metrics=metrics)
-    return {"entry_id": entry_id, "state": "verified", "metrics": metrics}
+    cleanup = {"cleared": False}
+    cleanup_detail = ""
+    try:
+        cleanup = await client.clear_terminal_ookla_pending(device_id, required=False)
+    except Exception as exc:
+        cleanup = {"cleared": False, "unknown": True}
+        cleanup_detail = f"Result verified; stale-request cleanup needs review: {exc}"
+    journal.transition(entry_id, "verified", metrics=metrics, detail=cleanup_detail)
+    return {"entry_id": entry_id, "state": "verified", "metrics": metrics, "cleanup": cleanup}
 
 
 async def reconcile_journal_entry(client: MosaicPortalClient, journal: MosaicJournal, entry: dict) -> dict:
@@ -535,8 +584,15 @@ async def reconcile_journal_entry(client: MosaicPortalClient, journal: MosaicJou
     except Exception as exc:
         journal.transition(entry_id, "unknown", detail=str(exc))
         return {"entry_id": entry_id, "state": "unknown", "detail": str(exc)}
-    journal.transition(entry_id, "verified", metrics=metrics)
-    return {"entry_id": entry_id, "state": "verified", "metrics": metrics}
+    cleanup = {"cleared": False}
+    cleanup_detail = ""
+    try:
+        cleanup = await client.clear_terminal_ookla_pending(device_id, required=False)
+    except Exception as exc:
+        cleanup = {"cleared": False, "unknown": True}
+        cleanup_detail = f"Result verified; stale-request cleanup needs review: {exc}"
+    journal.transition(entry_id, "verified", metrics=metrics, detail=cleanup_detail)
+    return {"entry_id": entry_id, "state": "verified", "metrics": metrics, "cleanup": cleanup}
 
 
 # Mosaic credential persistence -------------------------------------------------

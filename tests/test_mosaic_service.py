@@ -68,6 +68,25 @@ class EligibilityTests(unittest.TestCase):
         support["applications"]["OoklaSpeedTest"]["driver"] = None
         self.assertEqual(evaluate_eligibility(record, support, status, actions, now=now).reason, "Ookla driver unavailable")
 
+
+    def test_terminal_ookla_pending_is_classified_as_stale_not_active(self):
+        record, support, status, actions, now = self.eligible_inputs()
+        actions["applications"]["OoklaSpeedTest"]["pendingSync"] = True
+        data = {"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"State": "Complete", "ExpectingResults": "false", "Results": {"1": {"Status": "Complete", "StartTimeStamp": "200"}}}}}}}}
+        result = evaluate_eligibility(record, support, status, actions, data=data, now=now)
+        self.assertFalse(result.eligible)
+        self.assertTrue(result.stale_pending)
+        self.assertEqual(result.reason, "Stale Ookla request — select this row and clear it")
+
+    def test_pending_ookla_expecting_results_remains_active_and_not_clearable(self):
+        record, support, status, actions, now = self.eligible_inputs()
+        actions["applications"]["OoklaSpeedTest"]["pendingSync"] = True
+        data = {"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"State": "In Progress", "ExpectingResults": "true", "Results": {}}}}}}}
+        result = evaluate_eligibility(record, support, status, actions, data=data, now=now)
+        self.assertFalse(result.eligible)
+        self.assertFalse(result.stale_pending)
+        self.assertEqual(result.reason, "Another Mosaic action is pending")
+
     def test_unsupported_nodriver_pending_stale_and_sr905_are_ineligible(self):
         record, support, status, actions, now = self.eligible_inputs()
         support["applications"]["OoklaSpeedTest"]["supported"] = False
@@ -170,6 +189,7 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
         def __init__(self, failure=None):
             self.failure = failure
             self.puts = 0
+            self.cleanup_calls = 0
         async def search_subscriber(self, code):
             return [{"fields": {"subscriberCode": str(code), "deviceId": "2", "subscriberId": "1", "model": "SDG", "disposition": "MANAGED_DEVICE", "lastInform": datetime.now(timezone.utc).isoformat(), "fullName": ""}}]
         async def read_device(self, device_id):
@@ -180,6 +200,9 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "data": {},
             }
         async def latest_result(self, device_id): return None
+        async def clear_terminal_ookla_pending(self, device_id, *, required=False):
+            self.cleanup_calls += 1
+            return {"cleared": True}
         async def start_ookla(self, device_id):
             self.puts += 1
             if self.failure == "before": raise ValueError("definite rejection")
@@ -207,6 +230,8 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
             outcome = await execute_journaled_ookla(client, journal, "10014", "2", "Chosen", record=record)
             self.assertEqual(outcome["state"], "verified")
             self.assertEqual(client.puts, 1)
+            self.assertEqual(client.cleanup_calls, 1)
+            self.assertTrue(outcome["cleanup"]["cleared"])
 
     async def test_capability_is_rechecked_immediately_before_submission(self):
         class BecameUnsupported(self.FakeClient):
@@ -377,6 +402,46 @@ class PortalClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["start_timestamp"], "300")
         self.assertEqual(reads, 3)
 
+
+
+    async def test_guarded_stale_clear_changes_only_ookla_and_verifies_readback(self):
+        action_reads = 0
+        puts = []
+        before = {"revision": 7, "applications": {"OoklaSpeedTest": {"pendingSync": True, "dataOwner": "SERVER"}, "Other": {"pendingSync": False}}}
+        data = {"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"State": "Complete", "ExpectingResults": "false", "Results": {"1": {"Status": "Complete", "StartTimeStamp": "200"}}}}}}}}
+        status = {"applications": {"OoklaSpeedTest": {"state": "OK"}}}
+        def handler(request):
+            nonlocal action_reads
+            if request.url.path.endswith("/actions") and request.method == "GET":
+                action_reads += 1
+                return httpx.Response(200, json=before if action_reads == 1 else {"revision": 7, "applications": {"OoklaSpeedTest": {"pendingSync": False, "dataOwner": "SERVER"}, "Other": {"pendingSync": False}}})
+            if request.url.path.endswith("/support"): return httpx.Response(200, json={"applications": {}})
+            if request.url.path.endswith("/data"): return httpx.Response(200, json=data)
+            if request.url.path.endswith("/applicationStatus"): return httpx.Response(200, json=status)
+            if request.url.path.endswith("/actions") and request.method == "PUT": puts.append(json.loads(request.content)); return httpx.Response(200, json={})
+            raise AssertionError(str(request.url))
+        client = MosaicPortalClient("https://mosaic.example", "user", "pass", transport=httpx.MockTransport(handler));client.set_session_for_test("session", "xsrf")
+        result = await client.clear_terminal_ookla_pending("2", required=True)
+        self.assertTrue(result["cleared"])
+        self.assertEqual(len(puts), 1)
+        self.assertEqual(puts[0]["revision"], 7)
+        self.assertFalse(puts[0]["applications"]["OoklaSpeedTest"]["pendingSync"])
+        self.assertFalse(puts[0]["applications"]["Other"]["pendingSync"])
+
+    async def test_active_pending_request_is_never_cleared(self):
+        puts = 0
+        before = {"applications": {"OoklaSpeedTest": {"pendingSync": True}}}
+        data = {"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"State": "In Progress", "ExpectingResults": "true", "Results": {}}}}}}}
+        def handler(request):
+            nonlocal puts
+            if request.url.path.endswith("/actions") and request.method == "GET": return httpx.Response(200, json=before)
+            if request.url.path.endswith("/data"): return httpx.Response(200, json=data)
+            if request.url.path.endswith("/applicationStatus"): return httpx.Response(200, json={"applications": {"OoklaSpeedTest": {"state": "OK"}}})
+            if request.method == "PUT": puts += 1
+            return httpx.Response(200, json={})
+        client = MosaicPortalClient("https://mosaic.example", "user", "pass", transport=httpx.MockTransport(handler));client.set_session_for_test("session", "xsrf")
+        with self.assertRaisesRegex(RuntimeError, "not stale"): await client.clear_terminal_ookla_pending("2", required=True)
+        self.assertEqual(puts, 0)
 
     async def test_http_5xx_after_put_is_ambiguous_and_not_retried(self):
         puts = 0
