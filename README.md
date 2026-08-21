@@ -12,6 +12,7 @@ Operations Toolkit 1.5.0 is a local candidate that preserves the working cnMaest
 - Provides a structured pop-out Preview Changes table while keeping update checks in Settings.
 - Runs explicitly selected supported Ookla tests sequentially, with a durable local journal and unknown-outcome reconciliation.
 - Automatically cleans app-owned terminal pending flags and provides a guarded Clear stale request action for externally staged leftovers.
+- Offers a confirmed local retry-lock release only after an old statusless operation has no remote pending action and no newer result.
 - Mosaic passwords are optionally stored per Windows user in Windows Credential Manager, never plaintext, and never auto-connect.
 - Preserves the cnMaestro API and guarded operational behavior from previous releases.
 

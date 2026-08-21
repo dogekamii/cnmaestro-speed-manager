@@ -246,6 +246,37 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(outcome["state"], "ineligible")
             self.assertEqual(client.puts, 0)
 
+
+    async def test_old_statusless_clear_remote_state_becomes_release_candidate(self):
+        class NoRemoteEvidence(self.FakeClient):
+            async def wait_for_speed_result(self, device_id, previous_timestamp, **kwargs): raise TimeoutError("no newer result")
+            async def read_device(self, device_id):
+                return {"support": {}, "application_status": {"applications": {"OoklaSpeedTest": {"state": "OK"}}}, "actions": {"applications": {"OoklaSpeedTest": {"pendingSync": False}}}, "data": {"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"State": "Complete", "ExpectingResults": "false", "Results": {"1": {"Status": "Complete", "StartTimeStamp": "100"}}}}}}}}}
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            entry = journal.plan("10014", "2", "SDG", previous_timestamp="100");journal.transition(entry, "submitting");journal.transition(entry, "unknown", detail="timeout")
+            row = journal.get(entry);created = datetime.fromisoformat(row["created_at"])
+            outcome = await reconcile_journal_entry(NoRemoteEvidence(), journal, row, now=created + timedelta(minutes=11))
+            self.assertEqual(outcome["state"], "release_candidate")
+            self.assertEqual(journal.get(entry)["state"], "unknown")
+            journal.release_retry_lock(entry)
+            self.assertEqual(journal.get(entry)["state"], "failed")
+            journal.assert_can_start("2")
+
+    async def test_recent_or_remote_pending_statusless_entry_stays_unknown(self):
+        class RemotePending(self.FakeClient):
+            async def wait_for_speed_result(self, device_id, previous_timestamp, **kwargs): raise TimeoutError("no newer result")
+            async def read_device(self, device_id):
+                return {"support": {}, "application_status": {"applications": {"OoklaSpeedTest": {"state": "OK"}}}, "actions": {"applications": {"OoklaSpeedTest": {"pendingSync": True}}}, "data": {}}
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            entry = journal.plan("10014", "2", "SDG", previous_timestamp="100");journal.transition(entry, "submitting");journal.transition(entry, "unknown", detail="timeout")
+            row = journal.get(entry);created = datetime.fromisoformat(row["created_at"])
+            recent = await reconcile_journal_entry(RemotePending(), journal, row, now=created + timedelta(minutes=1))
+            self.assertEqual(recent["state"], "unknown")
+            old = await reconcile_journal_entry(RemotePending(), journal, journal.get(entry), now=created + timedelta(minutes=11))
+            self.assertEqual(old["state"], "unknown")
+
     async def test_reconcile_planned_and_statusless_unknown_entries(self):
         with tempfile.TemporaryDirectory() as directory:
             journal = MosaicJournal(Path(directory) / "mosaic.db")

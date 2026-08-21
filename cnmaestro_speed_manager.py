@@ -376,12 +376,18 @@ class App(tk.Tk):
   entries=self.mosaic_journal.unresolved()
   if not entries:return messagebox.showinfo('Mosaic','No unresolved Mosaic outcomes.')
   async def work():
-   resolved=0
-   for entry in entries:
-    outcome=await reconcile_journal_entry(self.mosaic_api,self.mosaic_journal,entry)
-    if outcome['state'] in ('verified','failed'):resolved+=1
-   return resolved
-  self.bg(work(),lambda result,error:self.mosaic_action_status.set('Reconcile error: '+str(error) if error else f'{result} unknown outcome(s) reconciled'))
+   return [await reconcile_journal_entry(self.mosaic_api,self.mosaic_journal,entry) for entry in entries]
+  self.bg(work(),self.finish_mosaic_reconciliation)
+ def finish_mosaic_reconciliation(self,outcomes,error):
+  if error:self.mosaic_action_status.set('Reconcile error: '+str(error));return
+  resolved=sum(outcome['state'] in ('verified','failed') for outcome in outcomes);release=[outcome for outcome in outcomes if outcome['state']=='release_candidate'];released=0
+  if release and messagebox.askyesno('Release blocked retry',f"{len(release)} old operation(s) have no pending Mosaic action and no newer result.\n\nRelease their local retry locks? No Mosaic request will be sent."):
+   for outcome in release:
+    self.mosaic_journal.release_retry_lock(outcome['entry_id']);released+=1
+    for candidate in self.mosaic_candidates:
+     if str(candidate.get('device_id'))==str(outcome.get('device_id')):candidate['state']='ready' if candidate.get('eligible') else 'review'
+   self.render_mosaic_candidates()
+  remaining=len(outcomes)-resolved-released;self.mosaic_action_status.set(f'{resolved} reconciled | {released} released | {remaining} still locked')
  def close_app(self):
   if self.mosaic_api:self.mosaic_api.clear_session()
   self.mosaic_password.set('');self.sec.set('');self.destroy()

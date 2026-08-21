@@ -277,6 +277,17 @@ class MosaicJournal:
                 raise RuntimeError("An unresolved Mosaic outcome must be reconciled before retry")
 
 
+    def release_retry_lock(self, entry_id: int) -> None:
+        with sqlite3.connect(self.path) as connection:
+            row = connection.execute("SELECT state FROM mosaic_speed_tests WHERE id=?", (entry_id,)).fetchone()
+            if not row or row[0] not in {"planned", "submitting", "submitted", "unknown"}:
+                raise RuntimeError("Only an unresolved Mosaic operation can be released")
+            connection.execute(
+                "UPDATE mosaic_speed_tests SET updated_at=?,state='failed',detail=? WHERE id=?",
+                (datetime.now(timezone.utc).isoformat(), "Operator released retry lock after clear remote-state verification", entry_id),
+            )
+
+
 class _LoginIPParser(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -561,13 +572,16 @@ async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJou
     return {"entry_id": entry_id, "state": "verified", "metrics": metrics, "cleanup": cleanup}
 
 
-async def reconcile_journal_entry(client: MosaicPortalClient, journal: MosaicJournal, entry: dict) -> dict:
-    """Reconcile one interrupted/ambiguous operation without resubmitting it."""
+async def reconcile_journal_entry(client: MosaicPortalClient, journal: MosaicJournal, entry: dict, *, now: datetime | None = None, release_age_seconds: int = 600) -> dict:
+    """Reconcile one interrupted operation without resubmission or automatic lock release."""
     entry_id = int(entry["id"])
     if entry.get("state") == "planned":
         detail = "Interrupted before Mosaic submission"
         journal.transition(entry_id, "failed", detail=detail)
         return {"entry_id": entry_id, "state": "failed", "detail": detail}
+    now = now or datetime.now(timezone.utc)
+    created = _parse_timestamp(entry.get("created_at"))
+    age_seconds = (now - created.astimezone(timezone.utc)).total_seconds() if created else 0
     try:
         if entry.get("status_url"):
             status = await client.poll_action(entry["status_url"], poll_interval=0, max_polls=1)
@@ -582,17 +596,32 @@ async def reconcile_journal_entry(client: MosaicPortalClient, journal: MosaicJou
             max_polls=1,
         )
     except Exception as exc:
+        if not entry.get("status_url") and age_seconds >= release_age_seconds and entry.get("previous_timestamp") is not None:
+            try:
+                bundle = await client.read_device(str(entry["device_id"]))
+                pending = [name for name, action in bundle.get("actions", {}).get("applications", {}).items() if isinstance(action, dict) and _bool(action.get("pendingSync"))]
+                try:value = bundle["data"]["applications"]["OoklaSpeedTest"]["dto"]["Settings"]["OoklaSpeedTest"]
+                except (KeyError, TypeError):value = {}
+                latest = latest_speed_result(bundle.get("data", {}))
+                no_newer = not latest or _timestamp_key(latest.get("start_timestamp")) <= _timestamp_key(entry.get("previous_timestamp"))
+                app_state = str(bundle.get("application_status", {}).get("applications", {}).get("OoklaSpeedTest", {}).get("state") or "").casefold()
+                terminal_clear = not pending and str(value.get("State") or "").casefold() == "complete" and not _bool(value.get("ExpectingResults")) and no_newer and app_state in {"ok", "complete", "completed"}
+                if terminal_clear:
+                    journal.transition(entry_id, "unknown", detail="No remote submission evidence; operator release available")
+                    return {"entry_id": entry_id, "device_id": str(entry["device_id"]), "state": "release_candidate", "detail": "No pending action or newer result was found after the safety interval"}
+            except Exception:
+                pass
         journal.transition(entry_id, "unknown", detail=str(exc))
-        return {"entry_id": entry_id, "state": "unknown", "detail": str(exc)}
+        return {"entry_id": entry_id, "device_id": str(entry["device_id"]), "state": "unknown", "detail": str(exc)}
     cleanup = {"cleared": False}
     cleanup_detail = ""
     try:
-        cleanup = await client.clear_terminal_ookla_pending(device_id, required=False)
+        cleanup = await client.clear_terminal_ookla_pending(str(entry["device_id"]), required=False)
     except Exception as exc:
         cleanup = {"cleared": False, "unknown": True}
         cleanup_detail = f"Result verified; stale-request cleanup needs review: {exc}"
     journal.transition(entry_id, "verified", metrics=metrics, detail=cleanup_detail)
-    return {"entry_id": entry_id, "state": "verified", "metrics": metrics, "cleanup": cleanup}
+    return {"entry_id": entry_id, "device_id": str(entry["device_id"]), "state": "verified", "metrics": metrics, "cleanup": cleanup}
 
 
 # Mosaic credential persistence -------------------------------------------------

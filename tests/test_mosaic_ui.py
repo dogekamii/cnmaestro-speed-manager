@@ -155,6 +155,33 @@ class MosaicUiTests(unittest.TestCase):
     def test_stale_clear_control_exists(self):
         self.assertEqual(self.app.mosaic_clear_stale_button.cget("text"), "Clear stale request")
 
+
+    def test_check_uncertain_offers_confirmed_local_retry_release(self):
+        class FakeJournal:
+            def __init__(self): self.released=[]
+            def unresolved(self): return [{"id": 7, "device_id": "2", "state": "unknown"}]
+            def release_retry_lock(self, entry_id): self.released.append(entry_id)
+        journal=FakeJournal();self.app.mosaic_journal=journal;self.app.mosaic_api=object();self.app.mosaic_candidates=[{"key":"2","customer":"0000 Sacred Wind Testing","device_id":"2","eligible":True,"state":"submitting"}]
+        async def release_candidate(client, journal, entry): return {"entry_id":7,"device_id":"2","state":"release_candidate","detail":"no remote evidence"}
+        def immediate(coroutine, callback):
+            try:callback(asyncio.run(coroutine),None)
+            except Exception as exc:callback(None,exc)
+        with mock.patch.object(toolkit,"reconcile_journal_entry",new=release_candidate),mock.patch.object(toolkit.messagebox,"askyesno",return_value=True),mock.patch.object(self.app,"bg",side_effect=immediate):self.app.reconcile_mosaic_unknown()
+        self.assertEqual(journal.released,[7])
+        self.assertEqual(self.app.mosaic_candidates[0]["state"],"ready")
+        self.assertIn("released",self.app.mosaic_action_status.get())
+
+    def test_declining_local_retry_release_preserves_lock(self):
+        class FakeJournal:
+            def __init__(self): self.released=[]
+            def unresolved(self): return [{"id":7,"device_id":"2","state":"unknown"}]
+            def release_retry_lock(self,entry_id):self.released.append(entry_id)
+        journal=FakeJournal();self.app.mosaic_journal=journal;self.app.mosaic_api=object()
+        async def release_candidate(client,journal,entry):return {"entry_id":7,"device_id":"2","state":"release_candidate","detail":"no remote evidence"}
+        def immediate(coroutine,callback):callback(asyncio.run(coroutine),None)
+        with mock.patch.object(toolkit,"reconcile_journal_entry",new=release_candidate),mock.patch.object(toolkit.messagebox,"askyesno",return_value=False),mock.patch.object(self.app,"bg",side_effect=immediate):self.app.reconcile_mosaic_unknown()
+        self.assertEqual(journal.released,[])
+
     def test_mosaic_actions_without_connection_notify_user(self):
         self.app.mosaic_api = None
         self.app.mosaic_search_code.set("10014")
