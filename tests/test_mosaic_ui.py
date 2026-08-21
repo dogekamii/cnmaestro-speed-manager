@@ -72,6 +72,24 @@ class MosaicUiTests(unittest.TestCase):
         run.assert_not_called()
 
 
+
+    def test_repeated_run_clicks_start_only_one_worker(self):
+        self.app.mosaic_api = object()
+        self.app.mosaic_confirmation.set("RUN SPEED TESTS")
+        self.app.mosaic_candidates = [{"key": "2", "device_id": "2", "subscriber_code": "10014", "model": "SDG", "eligible": True, "record": {"fields": {}}}]
+        self.app.mosaic_checked = {"2"}
+        def hold(coroutine, callback): coroutine.close()
+        with mock.patch.object(self.app, "bg", side_effect=hold) as background:
+            self.app.run_selected_mosaic_tests()
+            self.app.run_selected_mosaic_tests()
+        self.assertEqual(background.call_count, 1)
+        self.assertEqual(str(self.app.mosaic_run_button.cget("state")), "disabled")
+
+    def test_ui_passes_match_record_to_fresh_preflight(self):
+        import inspect
+        source = inspect.getsource(toolkit.App.run_selected_mosaic_tests)
+        self.assertIn("record=c['record']", source)
+
     def test_mosaic_worker_does_not_call_tk_after_from_background_coroutine(self):
         import inspect
         source = inspect.getsource(toolkit.App.run_selected_mosaic_tests)

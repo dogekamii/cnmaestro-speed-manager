@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from mosaic_service import (
     MosaicPortalClient,
     evaluate_eligibility,
     execute_journaled_ookla,
+    reconcile_journal_entry,
     latest_speed_result,
     match_subscriber,
     parse_customer_identity,
@@ -131,11 +133,51 @@ class JournalTests(unittest.TestCase):
 
 
 
+
+    def test_unresolved_returns_every_restart_blocking_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            states = ("planned", "submitting", "submitted", "unknown")
+            for index, state in enumerate(states, 1):
+                entry = journal.plan(str(index), str(index), "model")
+                if state != "planned": journal.transition(entry, state)
+            self.assertEqual({row["state"] for row in journal.unresolved()}, set(states))
+
+    def test_unresolved_device_reservation_is_atomic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mosaic.db"
+            journals = [MosaicJournal(path), MosaicJournal(path)]
+            barrier = threading.Barrier(2)
+            results = []
+            for journal in journals:
+                journal.assert_can_start = lambda device_id, barrier=barrier: barrier.wait()
+            def reserve(journal):
+                try: results.append(("ok", journal.plan("10014", "2", "model")))
+                except Exception as exc: results.append((type(exc).__name__, str(exc)))
+            threads = [threading.Thread(target=reserve, args=(journal,)) for journal in journals]
+            [thread.start() for thread in threads]; [thread.join() for thread in threads]
+            self.assertEqual(sum(kind == "ok" for kind, _ in results), 1)
+            self.assertEqual(sum(kind == "RuntimeError" for kind, _ in results), 1)
+
+
 class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def managed_record():
+        return {"fields": {"subscriberCode": "10014", "deviceId": "2", "subscriberId": "1", "model": "SDG", "disposition": "MANAGED_DEVICE", "lastInform": datetime.now(timezone.utc).isoformat()}}
+
     class FakeClient:
         def __init__(self, failure=None):
             self.failure = failure
             self.puts = 0
+        async def search_subscriber(self, code):
+            return [{"fields": {"subscriberCode": str(code), "deviceId": "2", "subscriberId": "1", "model": "SDG", "disposition": "MANAGED_DEVICE", "lastInform": datetime.now(timezone.utc).isoformat(), "fullName": ""}}]
+        async def read_device(self, device_id):
+            return {
+                "support": {"applications": {"OoklaSpeedTest": {"supported": True, "driver": {"ref": "driver"}}}},
+                "application_status": {"applications": {"OoklaSpeedTest": {"state": "OK"}}},
+                "actions": {"applications": {"OoklaSpeedTest": {"pendingSync": False}}},
+                "data": {},
+            }
         async def latest_result(self, device_id): return None
         async def start_ookla(self, device_id):
             self.puts += 1
@@ -144,14 +186,43 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
         async def poll_action(self, status_url):
             if self.failure == "after": raise TimeoutError("ambiguous poll")
             return {"completed": True, "solicitStatus": {"status": "SUCCESS"}, "syncApplications": [{"appCode": "OoklaSpeedTest", "complete": True}]}
-        async def wait_for_speed_result(self, device_id, previous_timestamp):
+        async def wait_for_speed_result(self, device_id, previous_timestamp, **kwargs):
             return {"start_timestamp": "200", "download_mbps": 50.0, "upload_mbps": 10.0, "latency_ms": 12.0, "jitter_ms": 3.0}
+
+
+    async def test_capability_is_rechecked_immediately_before_submission(self):
+        class BecameUnsupported(self.FakeClient):
+            async def read_device(self, device_id):
+                bundle = await super().read_device(device_id)
+                bundle["support"]["applications"]["OoklaSpeedTest"]["supported"] = False
+                return bundle
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            client = BecameUnsupported()
+            outcome = await execute_journaled_ookla(client, journal, "10014", "2", "SDG", record=self.managed_record())
+            self.assertEqual(outcome["state"], "ineligible")
+            self.assertEqual(client.puts, 0)
+
+    async def test_reconcile_planned_and_statusless_unknown_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            planned = journal.plan("10014", "2", "SDG", previous_timestamp="100")
+            planned_outcome = await reconcile_journal_entry(self.FakeClient(), journal, journal.get(planned))
+            self.assertEqual(planned_outcome["state"], "failed")
+            self.assertEqual(journal.get(planned)["state"], "failed")
+            unknown = journal.plan("10014", "3", "SDG", previous_timestamp="100")
+            journal.transition(unknown, "submitting")
+            journal.transition(unknown, "unknown", detail="timeout")
+            client = self.FakeClient()
+            outcome = await reconcile_journal_entry(client, journal, journal.get(unknown))
+            self.assertEqual(outcome["state"], "verified")
+            self.assertEqual(journal.get(unknown)["state"], "verified")
 
     async def test_success_is_verified(self):
         with tempfile.TemporaryDirectory() as directory:
             journal = MosaicJournal(Path(directory) / "mosaic.db")
             client = self.FakeClient()
-            outcome = await execute_journaled_ookla(client, journal, "10014", "2", "SDG")
+            outcome = await execute_journaled_ookla(client, journal, "10014", "2", "SDG", record=self.managed_record())
             self.assertEqual(outcome["state"], "verified")
             self.assertEqual(journal.get(outcome["entry_id"])["state"], "verified")
             self.assertEqual(client.puts, 1)
@@ -159,7 +230,7 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_definite_pre_submit_failure_is_failed(self):
         with tempfile.TemporaryDirectory() as directory:
             journal = MosaicJournal(Path(directory) / "mosaic.db")
-            outcome = await execute_journaled_ookla(self.FakeClient("before"), journal, "10014", "2", "SDG")
+            outcome = await execute_journaled_ookla(self.FakeClient("before"), journal, "10014", "2", "SDG", record=self.managed_record())
             self.assertEqual(outcome["state"], "failed")
 
 
@@ -169,7 +240,7 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
                 return {"completed": True, "solicitStatus": {"status": "SUCCESS"}, "syncApplications": [{"appCode": "OoklaSpeedTest", "complete": False}]}
         with tempfile.TemporaryDirectory() as directory:
             journal = MosaicJournal(Path(directory) / "mosaic.db")
-            outcome = await execute_journaled_ookla(IncompleteClient(), journal, "10014", "2", "SDG")
+            outcome = await execute_journaled_ookla(IncompleteClient(), journal, "10014", "2", "SDG", record=self.managed_record())
             self.assertEqual(outcome["state"], "unknown")
             self.assertIn("did not confirm completion", outcome["detail"])
 
@@ -177,7 +248,7 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             journal = MosaicJournal(Path(directory) / "mosaic.db")
             client = self.FakeClient("after")
-            outcome = await execute_journaled_ookla(client, journal, "10014", "2", "SDG")
+            outcome = await execute_journaled_ookla(client, journal, "10014", "2", "SDG", record=self.managed_record())
             self.assertEqual(outcome["state"], "unknown")
             self.assertEqual(client.puts, 1)
             with self.assertRaisesRegex(RuntimeError, "unresolved"):
@@ -262,14 +333,29 @@ class PortalClientTests(unittest.IsolatedAsyncioTestCase):
             nonlocal reads
             if request.url.path.endswith("/data"):
                 reads += 1
-                stamp = "100" if reads < 3 else "200"
+                stamp = "100" if reads == 1 else ("200" if reads == 2 else "300")
                 return httpx.Response(200, json={"applications": {"OoklaSpeedTest": {"dto": {"Settings": {"OoklaSpeedTest": {"Results": {"1": {"StartTimeStamp": stamp, "DownloadSpeed": "1000000"}}}}}}}})
             raise AssertionError(str(request.url))
         client = MosaicPortalClient("https://mosaic.example", "user", "pass", transport=httpx.MockTransport(handler))
         client.set_session_for_test("session", "xsrf")
-        result = await client.wait_for_speed_result("2", previous_timestamp="100", poll_interval=0, max_polls=3)
-        self.assertEqual(result["start_timestamp"], "200")
+        result = await client.wait_for_speed_result("2", previous_timestamp="200", poll_interval=0, max_polls=3)
+        self.assertEqual(result["start_timestamp"], "300")
         self.assertEqual(reads, 3)
+
+
+    async def test_http_5xx_after_put_is_ambiguous_and_not_retried(self):
+        puts = 0
+        def handler(request):
+            nonlocal puts
+            if request.method == "GET":
+                return httpx.Response(200, json={"applications": {"OoklaSpeedTest": {"pendingSync": False}}})
+            puts += 1
+            return httpx.Response(503, json={"error": "unavailable"})
+        client = MosaicPortalClient("https://mosaic.example", "user", "pass", transport=httpx.MockTransport(handler))
+        client.set_session_for_test("session", "xsrf")
+        with self.assertRaises(AmbiguousSubmissionError):
+            await client.start_ookla("2")
+        self.assertEqual(puts, 1)
 
     async def test_ambiguous_put_is_not_retried(self):
         count = 0

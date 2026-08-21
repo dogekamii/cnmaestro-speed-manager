@@ -4,7 +4,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk,messagebox,filedialog
 import httpx,truststore,keyring
-from mosaic_service import (AmbiguousSubmissionError,DEFAULT_MOSAIC_URL,MosaicJournal,MosaicPortalClient,evaluate_eligibility,execute_journaled_ookla,forget_mosaic_credentials,latest_speed_result,load_mosaic_credentials,ookla_action_complete,match_subscriber,parse_customer_identity,save_mosaic_credentials)
+from mosaic_service import (AmbiguousSubmissionError,DEFAULT_MOSAIC_URL,MosaicJournal,MosaicPortalClient,evaluate_eligibility,execute_journaled_ookla,forget_mosaic_credentials,reconcile_journal_entry,latest_speed_result,load_mosaic_credentials,ookla_action_complete,match_subscriber,parse_customer_identity,save_mosaic_credentials)
 from keyring.errors import PasswordDeleteError
 APP_VERSION='1.5.0';APP_DIR=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parent;UPDATE_CONFIG=APP_DIR/'update_config.json';DEFAULT_MANIFEST_URL='https://raw.githubusercontent.com/dogekamii/Operations-Toolkit/refs/heads/main/latest.json'
 PKGS={"6 Mbps":("6mbps Package",6451,2150),"10 Mbps":("10mbps Package",10752,1075),"15 Mbps":("15mbps Package",16128,3225),"20 Mbps":("20mbps Package",21500,10752),"25 Mbps":("25mbps Package",26880,3225),"50 Mbps":("50mbps Package",53760,10750),"75 Mbps":("75mbps Package",80640,10750),"100 Mbps":("100mbps Package",107520,21500)}
@@ -138,7 +138,7 @@ class API:
   finally:await c.aclose()
 class App(tk.Tk):
  def __init__(self):
-  super().__init__();initdb();self.settings_path=SETTINGS;self.mosaic_journal=MosaicJournal(DB);self.credential_backend=keyring;self.title('Operations Toolkit');self.geometry('1280x720');self.minsize(1120,680);self.api=None;self.rows=cached();self.preview=[];self.checked=set();self.cancel=threading.Event();self.scanning=False;self.sort_col='name';self.sort_rev=False;self.job_status={};self.mosaic_api=None;self.mosaic_candidates=[];self.mosaic_checked=set();self.pending_speedtest_customers=[];self._publish_handoff_signature=None;self.style=ttk.Style();self.ui();self.protocol('WM_DELETE_WINDOW',self.close_app)
+  super().__init__();initdb();self.settings_path=SETTINGS;self.mosaic_journal=MosaicJournal(DB);self.credential_backend=keyring;self.title('Operations Toolkit');self.geometry('1280x720');self.minsize(1120,680);self.api=None;self.rows=cached();self.preview=[];self.checked=set();self.cancel=threading.Event();self.scanning=False;self.sort_col='name';self.sort_rev=False;self.job_status={};self.mosaic_api=None;self.mosaic_candidates=[];self.mosaic_checked=set();self.mosaic_running=False;self.pending_speedtest_customers=[];self._publish_handoff_signature=None;self.style=ttk.Style();self.ui();self.protocol('WM_DELETE_WINDOW',self.close_app)
   if os.getenv('OPERATIONS_TOOLKIT_PREVIEW'):self.configure_styles()
   else:self.load_settings();self.configure_styles() if self.theme.get()=='Dark' else None
   self.render();self.show_page('speed_manager')
@@ -276,7 +276,7 @@ class App(tk.Tk):
    return found
   self.bg(work(),self.finish_mosaic_matches)
  def mosaic_candidate(self,customer,index,match,eligibility):
-  fields=match.record.get('fields',{}) if match and match.record else {};status=match.status if match else 'missing_code';reason=match.reason if match else 'Customer name has no leading subscriber code';eligible=bool(eligibility and eligibility.eligible);return {'key':str(fields.get('deviceId') or f'unmatched-{index}'),'selected':False,'customer':customer.get('name',''),'subscriber_code':match.subscriber_code if match else None,'subscriber_id':fields.get('subscriberId'),'device_id':fields.get('deviceId'),'model':fields.get('model'),'match':match.confidence if match and match.confidence else status,'eligible':eligible,'eligibility':eligibility.reason if eligibility else reason,'state':'ready' if eligible else 'review','download_mbps':None,'upload_mbps':None,'latency_ms':None,'jitter_ms':None}
+  fields=match.record.get('fields',{}) if match and match.record else {};status=match.status if match else 'missing_code';reason=match.reason if match else 'Customer name has no leading subscriber code';eligible=bool(eligibility and eligibility.eligible);return {'key':str(fields.get('deviceId') or f'unmatched-{index}'),'selected':False,'customer':customer.get('name',''),'subscriber_code':match.subscriber_code if match else None,'subscriber_id':fields.get('subscriberId'),'device_id':fields.get('deviceId'),'model':fields.get('model'),'match':match.confidence if match and match.confidence else status,'eligible':eligible,'eligibility':eligibility.reason if eligibility else reason,'state':'ready' if eligible else 'review','download_mbps':None,'upload_mbps':None,'latency_ms':None,'jitter_ms':None,'record':match.record if match and match.record else None}
  def finish_mosaic_matches(self,result,error):
   if error:self.mosaic_action_status.set('Match error: '+str(error));return
   self.mosaic_candidates=result;self.mosaic_checked.clear();self.render_mosaic_candidates();ready=sum(c['eligible'] for c in result);self.mosaic_action_status.set(f'{len(result)} matched/reviewed | {ready} eligible')
@@ -296,30 +296,30 @@ class App(tk.Tk):
   else:self.mosaic_checked.add(key)
   candidate['selected']=key in self.mosaic_checked;self.render_mosaic_candidates()
  def run_selected_mosaic_tests(self):
+  if self.mosaic_running:return
   if not self.mosaic_api:return messagebox.showerror('Mosaic','Connect to Mosaic first')
   if self.mosaic_confirmation.get()!='RUN SPEED TESTS':return messagebox.showerror('Blocked','Enter: RUN SPEED TESTS')
   selected=[c for c in self.mosaic_candidates if c['key'] in self.mosaic_checked and c.get('eligible')]
   if not selected:return messagebox.showinfo('Mosaic','Select at least one eligible router.')
-  self.mosaic_action_status.set(f'Running 1 of {len(selected)}...')
+  self.mosaic_running=True;self.mosaic_run_button.configure(state='disabled');self.mosaic_action_status.set(f'Running 1 of {len(selected)}...')
   async def work():
    for index,c in enumerate(selected,1):
-    device=str(c['device_id']);c['state']='submitting';outcome=await execute_journaled_ookla(self.mosaic_api,self.mosaic_journal,str(c['subscriber_code']),device,str(c.get('model') or ''));c['state']=outcome['state']
+    device=str(c['device_id']);c['state']='submitting';outcome=await execute_journaled_ookla(self.mosaic_api,self.mosaic_journal,str(c['subscriber_code']),device,str(c.get('model') or ''),record=c['record']);c['state']=outcome['state']
     if outcome.get('metrics'):c.update(outcome['metrics'])
     if outcome.get('detail'):c['eligibility']=outcome['detail']
    return selected
   self.bg(work(),lambda result,error:self.finish_mosaic_tests(result,error))
  def finish_mosaic_tests(self,result,error):
-  self.render_mosaic_candidates();self.mosaic_action_status.set('Speed-test error: '+str(error) if error else 'Speed-test batch complete. Review results and unknown states.')
+  self.mosaic_running=False;self.mosaic_run_button.configure(state='normal');self.render_mosaic_candidates();self.mosaic_action_status.set('Speed-test error: '+str(error) if error else 'Speed-test batch complete. Review results and unknown states.')
  def reconcile_mosaic_unknown(self):
   if not self.mosaic_api:return messagebox.showerror('Mosaic','Connect to Mosaic first')
-  entries=self.mosaic_journal.unknown()
-  if not entries:return messagebox.showinfo('Mosaic','No unknown Mosaic outcomes.')
+  entries=self.mosaic_journal.unresolved()
+  if not entries:return messagebox.showinfo('Mosaic','No unresolved Mosaic outcomes.')
   async def work():
    resolved=0
    for entry in entries:
-    if not entry.get('status_url'):continue
-    try:status=await self.mosaic_api.poll_action(entry['status_url'],poll_interval=0,max_polls=1);assert status.get('solicitStatus',{}).get('status')=='SUCCESS' and ookla_action_complete(status);metrics=await self.mosaic_api.wait_for_speed_result(entry['device_id'],previous_timestamp=entry.get('previous_timestamp'),poll_interval=0,max_polls=1);self.mosaic_journal.transition(entry['id'],'verified',metrics=metrics);resolved+=1
-    except Exception:pass
+    outcome=await reconcile_journal_entry(self.mosaic_api,self.mosaic_journal,entry)
+    if outcome['state'] in ('verified','failed'):resolved+=1
    return resolved
   self.bg(work(),lambda result,error:self.mosaic_action_status.set('Reconcile error: '+str(error) if error else f'{result} unknown outcome(s) reconciled'))
  def close_app(self):

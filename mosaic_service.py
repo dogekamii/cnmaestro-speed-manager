@@ -184,15 +184,23 @@ class MosaicJournal:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(mosaic_speed_tests)")}
             if "previous_timestamp" not in columns:
                 connection.execute("ALTER TABLE mosaic_speed_tests ADD COLUMN previous_timestamp TEXT")
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_mosaic_unresolved_device "
+                "ON mosaic_speed_tests(device_id) "
+                "WHERE state IN ('planned','submitting','submitted','unknown')"
+            )
 
     def plan(self, subscriber_code: str, device_id: str, model: str, *, previous_timestamp: str | None = None) -> int:
         self.assert_can_start(device_id)
         now = datetime.now(timezone.utc).isoformat()
         with sqlite3.connect(self.path) as connection:
-            cursor = connection.execute(
-                "INSERT INTO mosaic_speed_tests(created_at,updated_at,subscriber_code,device_id,model,state,detail,previous_timestamp) VALUES(?,?,?,?,?,?,?,?)",
-                (now, now, subscriber_code, device_id, model, "planned", "", previous_timestamp),
-            )
+            try:
+                cursor = connection.execute(
+                    "INSERT INTO mosaic_speed_tests(created_at,updated_at,subscriber_code,device_id,model,state,detail,previous_timestamp) VALUES(?,?,?,?,?,?,?,?)",
+                    (now, now, subscriber_code, device_id, model, "planned", "", previous_timestamp),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise RuntimeError("An unresolved Mosaic outcome must be reconciled before retry") from exc
             return int(cursor.lastrowid)
 
     def transition(self, entry_id: int, state: str, *, status_url: str | None = None, metrics: dict | None = None, detail: str = "") -> None:
@@ -215,10 +223,15 @@ class MosaicJournal:
                 raise KeyError(entry_id)
             return dict(row)
 
-    def unknown(self) -> list[dict]:
+    def unresolved(self) -> list[dict]:
         with sqlite3.connect(self.path) as connection:
             connection.row_factory = sqlite3.Row
-            return [dict(row) for row in connection.execute("SELECT * FROM mosaic_speed_tests WHERE state='unknown' ORDER BY id")]
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM mosaic_speed_tests WHERE state IN ('planned','submitting','submitted','unknown') ORDER BY id"
+            )]
+
+    def unknown(self) -> list[dict]:
+        return [row for row in self.unresolved() if row["state"] == "unknown"]
 
     def assert_can_start(self, device_id: str) -> None:
         with sqlite3.connect(self.path) as connection:
@@ -361,6 +374,10 @@ class MosaicPortalClient:
         payload["solicit"] = True
         try:
             response = await self._request("PUT", prefix + "/actions", headers={"Content-Type": "application/json"}, json=payload)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code >= 500:
+                raise AmbiguousSubmissionError("Mosaic action submission outcome is unknown") from exc
+            raise
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise AmbiguousSubmissionError("Mosaic action submission outcome is unknown") from exc
         status_url = response.headers.get("Action-Status")
@@ -390,7 +407,10 @@ class MosaicPortalClient:
             if attempt and poll_interval:
                 await asyncio.sleep(poll_interval)
             result = await self.latest_result(device_id)
-            if result and result.get("start_timestamp") != previous_timestamp:
+            if result and (
+                previous_timestamp is None
+                or _timestamp_key(result.get("start_timestamp")) > _timestamp_key(previous_timestamp)
+            ):
                 return result
         raise TimeoutError("Mosaic speed-test result did not arrive")
 
@@ -411,9 +431,29 @@ class MosaicPortalClient:
             raise RuntimeError("Mosaic did not confirm completion of OoklaSpeedTest")
         return await self.wait_for_speed_result(device_id, previous_timestamp=previous.get("start_timestamp") if previous else None, poll_interval=0 if poll_interval == 0 else 3.0)
 
-async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJournal, subscriber_code: str, device_id: str, model: str) -> dict:
-    """Run one Ookla action with durable, method-aware outcome states."""
-    previous = await client.latest_result(device_id)
+async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJournal, subscriber_code: str, device_id: str, model: str, *, record: dict) -> dict:
+    """Run one Ookla action with fresh capability checks and durable outcome states."""
+    try:
+        records = await client.search_subscriber(subscriber_code)
+        current_match = match_subscriber(f"{subscriber_code} {record.get('fields', {}).get('fullName', '')}", records)
+        if current_match.status != "matched":
+            return {"entry_id": None, "state": "ineligible", "detail": current_match.reason}
+        current_record = current_match.record
+        current_device = str(current_record.get("fields", {}).get("deviceId") or "")
+        if current_device != str(device_id):
+            return {"entry_id": None, "state": "ineligible", "detail": "Mosaic device changed after matching"}
+        bundle = await client.read_device(device_id)
+        eligibility = evaluate_eligibility(
+            current_record,
+            bundle["support"],
+            bundle["application_status"],
+            bundle["actions"],
+        )
+        if not eligibility.eligible:
+            return {"entry_id": None, "state": "ineligible", "detail": eligibility.reason}
+        previous = latest_speed_result(bundle["data"])
+    except Exception as exc:
+        return {"entry_id": None, "state": "failed", "detail": f"Mosaic preflight failed: {exc}"}
     entry_id = journal.plan(
         subscriber_code,
         device_id,
@@ -440,6 +480,33 @@ async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJou
         metrics = await client.wait_for_speed_result(
             device_id,
             previous_timestamp=previous.get("start_timestamp") if previous else None,
+        )
+    except Exception as exc:
+        journal.transition(entry_id, "unknown", detail=str(exc))
+        return {"entry_id": entry_id, "state": "unknown", "detail": str(exc)}
+    journal.transition(entry_id, "verified", metrics=metrics)
+    return {"entry_id": entry_id, "state": "verified", "metrics": metrics}
+
+
+async def reconcile_journal_entry(client: MosaicPortalClient, journal: MosaicJournal, entry: dict) -> dict:
+    """Reconcile one interrupted/ambiguous operation without resubmitting it."""
+    entry_id = int(entry["id"])
+    if entry.get("state") == "planned":
+        detail = "Interrupted before Mosaic submission"
+        journal.transition(entry_id, "failed", detail=detail)
+        return {"entry_id": entry_id, "state": "failed", "detail": detail}
+    try:
+        if entry.get("status_url"):
+            status = await client.poll_action(entry["status_url"], poll_interval=0, max_polls=1)
+            if status.get("solicitStatus", {}).get("status") != "SUCCESS":
+                raise RuntimeError("Mosaic could not contact the router")
+            if not ookla_action_complete(status):
+                raise RuntimeError("Mosaic did not confirm completion of OoklaSpeedTest")
+        metrics = await client.wait_for_speed_result(
+            str(entry["device_id"]),
+            previous_timestamp=entry.get("previous_timestamp"),
+            poll_interval=0,
+            max_polls=1,
         )
     except Exception as exc:
         journal.transition(entry_id, "unknown", detail=str(exc))
