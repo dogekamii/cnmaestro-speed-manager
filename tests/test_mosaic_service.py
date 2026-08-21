@@ -264,6 +264,23 @@ class PortalClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(client.session_id)
         self.assertIsNone(client.xsrf_token)
         self.assertEqual(client.password, "")
+
+    async def test_login_follows_same_origin_login_page_redirect(self):
+        seen = []
+        def handler(request):
+            seen.append((request.method, request.url.path))
+            if request.url.path == "/prime-home/":
+                return httpx.Response(302, headers={"Location": "https://mosaic.example/prime-home/login/;jsessionid=test"})
+            if request.url.path.startswith("/prime-home/login/"):
+                return httpx.Response(200, text='<input name="loginPanel:ipAddress" value="10.10.19.115"/>')
+            if request.url.path == "/prime-home/api/v1/sessions/portal":
+                return httpx.Response(200, json={"sessionId": "session", "xsrfToken": "xsrf", "passphraseExpired": False})
+            raise AssertionError(str(request.url))
+        client = MosaicPortalClient("https://mosaic.example", "user", "pass", transport=httpx.MockTransport(handler))
+        result = await client.login()
+        self.assertTrue(result["authenticated"])
+        self.assertEqual(seen, [("GET", "/prime-home/"), ("GET", "/prime-home/login/;jsessionid=test"), ("POST", "/prime-home/api/v1/sessions/portal")])
+
     async def test_login_search_and_device_read_contract(self):
         seen = []
         def handler(request):

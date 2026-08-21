@@ -303,8 +303,13 @@ class MosaicPortalClient:
 
     async def login(self) -> dict:
         async with httpx.AsyncClient(**self._client_kwargs()) as client:
-            page = await client.get(self._url("/prime-home/"), headers={"Accept": "text/html"})
+            page = await client.get(
+                self._url("/prime-home/"),
+                headers={"Accept": "text/html"},
+                follow_redirects=True,
+            )
             page.raise_for_status()
+            self._same_origin_url(str(page.url))
             parser = _LoginIPParser()
             parser.feed(page.text)
             if not parser.value:
