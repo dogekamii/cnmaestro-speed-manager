@@ -190,6 +190,23 @@ class JournaledExecutionTests(unittest.IsolatedAsyncioTestCase):
             return {"start_timestamp": "200", "download_mbps": 50.0, "upload_mbps": 10.0, "latency_ms": 12.0, "jitter_ms": 3.0}
 
 
+
+    async def test_explicit_device_choice_allows_multi_device_subscriber(self):
+        class MultiDevice(self.FakeClient):
+            async def search_subscriber(self, code):
+                now = datetime.now(timezone.utc).isoformat()
+                return [
+                    {"fields": {"subscriberCode": str(code), "deviceId": "2", "subscriberId": "1", "model": "Chosen", "disposition": "MANAGED_DEVICE", "lastInform": now, "fullName": "Test"}},
+                    {"fields": {"subscriberCode": str(code), "deviceId": "3", "subscriberId": "1", "model": "Other", "disposition": "MANAGED_DEVICE", "lastInform": now, "fullName": "Test"}},
+                ]
+        with tempfile.TemporaryDirectory() as directory:
+            journal = MosaicJournal(Path(directory) / "mosaic.db")
+            client = MultiDevice()
+            record = self.managed_record()
+            outcome = await execute_journaled_ookla(client, journal, "10014", "2", "Chosen", record=record)
+            self.assertEqual(outcome["state"], "verified")
+            self.assertEqual(client.puts, 1)
+
     async def test_capability_is_rechecked_immediately_before_submission(self):
         class BecameUnsupported(self.FakeClient):
             async def read_device(self, device_id):

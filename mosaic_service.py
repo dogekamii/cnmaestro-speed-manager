@@ -440,13 +440,15 @@ async def execute_journaled_ookla(client: MosaicPortalClient, journal: MosaicJou
     """Run one Ookla action with fresh capability checks and durable outcome states."""
     try:
         records = await client.search_subscriber(subscriber_code)
-        current_match = match_subscriber(f"{subscriber_code} {record.get('fields', {}).get('fullName', '')}", records)
-        if current_match.status != "matched":
-            return {"entry_id": None, "state": "ineligible", "detail": current_match.reason}
-        current_record = current_match.record
-        current_device = str(current_record.get("fields", {}).get("deviceId") or "")
-        if current_device != str(device_id):
-            return {"entry_id": None, "state": "ineligible", "detail": "Mosaic device changed after matching"}
+        exact = {
+            (str(item.get("fields", {}).get("subscriberId") or ""), str(item.get("fields", {}).get("deviceId") or "")): item
+            for item in records
+            if str(item.get("fields", {}).get("subscriberCode") or "") == str(subscriber_code)
+        }
+        chosen = [item for (_, candidate_device), item in exact.items() if candidate_device == str(device_id)]
+        if len(chosen) != 1:
+            return {"entry_id": None, "state": "ineligible", "detail": "Selected Mosaic device is no longer an exact subscriber match"}
+        current_record = chosen[0]
         bundle = await client.read_device(device_id)
         eligibility = evaluate_eligibility(
             current_record,

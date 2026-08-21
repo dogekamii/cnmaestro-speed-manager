@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import tempfile
@@ -73,9 +74,49 @@ class MosaicUiTests(unittest.TestCase):
 
 
 
+
+    def test_independent_subscriber_code_search_builds_candidate(self):
+        class FakeApi:
+            async def search_subscriber(self, code):
+                return [{"fields": {"subscriberCode": code, "subscriberId": "1", "deviceId": "2", "model": "ADTRAN", "fullName": "Test Customer", "disposition": "MANAGED_DEVICE", "lastInform": "2099-01-01T00:00:00+00:00"}}]
+            async def read_device(self, device_id):
+                return {"support": {"applications": {"OoklaSpeedTest": {"supported": True, "driver": {"ref": "driver"}}}}, "application_status": {"applications": {"OoklaSpeedTest": {"state": "OK"}}}, "actions": {"applications": {"OoklaSpeedTest": {"pendingSync": False}}}, "data": {}}
+        self.app.mosaic_api = FakeApi()
+        self.app.mosaic_search_code.set("10014")
+        def immediate(coroutine, callback):
+            try: callback(asyncio.run(coroutine), None)
+            except Exception as exc: callback(None, exc)
+        with mock.patch.object(self.app, "bg", side_effect=immediate):
+            self.app.search_mosaic_subscriber()
+        self.assertEqual(len(self.app.mosaic_candidates), 1)
+        self.assertEqual(self.app.mosaic_candidates[0]["subscriber_code"], "10014")
+        self.assertEqual(self.app.mosaic_candidates[0]["device_id"], "2")
+
+    def test_multiple_devices_expand_into_reviewable_device_rows(self):
+        class FakeApi:
+            async def read_device(self, device_id):
+                return {"support": {"applications": {"OoklaSpeedTest": {"supported": True, "driver": {"ref": "driver"}}}}, "application_status": {"applications": {"OoklaSpeedTest": {"state": "OK"}}}, "actions": {"applications": {"OoklaSpeedTest": {"pendingSync": False}}}, "data": {}}
+        self.app.mosaic_api = FakeApi()
+        records = [
+            {"fields": {"subscriberCode": "10014", "subscriberId": "1", "deviceId": "2", "model": "Router A", "fullName": "Test", "disposition": "MANAGED_DEVICE", "lastInform": "2099-01-01T00:00:00+00:00"}},
+            {"fields": {"subscriberCode": "10014", "subscriberId": "1", "deviceId": "3", "model": "Router B", "fullName": "Test", "disposition": "MANAGED_DEVICE", "lastInform": "2099-01-01T00:00:00+00:00"}},
+        ]
+        rows = asyncio.run(self.app.mosaic_candidates_for_records({"name": "10014 Test"}, 0, records))
+        self.assertEqual({row["device_id"] for row in rows}, {"2", "3"})
+        self.assertTrue(all(row["match"] == "multiple_devices" for row in rows))
+        self.assertTrue(all(row["eligible"] for row in rows))
+
+    def test_speed_test_controls_use_clear_labels_without_confirmation_box(self):
+        self.assertTrue(hasattr(self.app, "mosaic_search_entry"))
+        self.assertEqual(self.app.mosaic_search_button.cget("text"), "Search Mosaic")
+        self.assertEqual(self.app.mosaic_reconcile_button.cget("text"), "Check uncertain tests")
+        self.assertEqual(self.app.mosaic_tree.heading("state")["text"], "Test status")
+        self.assertFalse(hasattr(self.app, "mosaic_confirmation"))
+        import inspect
+        self.assertNotIn("RUN SPEED TESTS", inspect.getsource(toolkit.App.run_selected_mosaic_tests))
+
     def test_repeated_run_clicks_start_only_one_worker(self):
         self.app.mosaic_api = object()
-        self.app.mosaic_confirmation.set("RUN SPEED TESTS")
         self.app.mosaic_candidates = [{"key": "2", "device_id": "2", "subscriber_code": "10014", "model": "SDG", "eligible": True, "record": {"fields": {}}}]
         self.app.mosaic_checked = {"2"}
         def hold(coroutine, callback): coroutine.close()
